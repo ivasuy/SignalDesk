@@ -1,6 +1,14 @@
 import { redditRequest } from './api.js';
 import { SUBREDDITS } from '../../utils/config.js';
-import { checkPostExistsByPostId, saveOpportunityPost } from '../../utils/db.js';
+import { 
+  saveOpportunityPost
+} from '../../db/posts.js';
+import { 
+  checkIngestionExists,
+  saveIngestionRecord,
+  markIngestionClassified,
+  generateContentHash
+} from '../../db/ingestion.js';
 import { isForHirePost, matchesKeywords } from '../../utils/utils.js';
 import { classifyOpportunity, generateReply, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
@@ -55,13 +63,24 @@ export async function scrapeReddit() {
         stats.total.scraped += posts.length;
         
         for (const post of posts) {
-          if (isForHirePost(post.title) || (post.selftext && isForHirePost(post.selftext))) {
+          const normalizedPostId = `reddit-${post.id}`;
+          const contentHash = generateContentHash(post.title, post.selftext || '');
+          const ingestionCheck = await checkIngestionExists('reddit_ingestion', normalizedPostId, contentHash);
+          if (ingestionCheck.exists) {
             continue;
           }
           
-          const normalizedPostId = `reddit-${post.id}`;
-          const postExists = await checkPostExistsByPostId(normalizedPostId);
-          if (postExists) {
+          if (isForHirePost(post.title) || (post.selftext && isForHirePost(post.selftext))) {
+            await saveIngestionRecord('reddit_ingestion', {
+              postId: normalizedPostId,
+              contentHash,
+              keywordMatched: false,
+              metadata: {
+                subreddit,
+                author: post.author || 'unknown',
+                title: post.title
+              }
+            });
             continue;
           }
           
@@ -69,8 +88,29 @@ export async function scrapeReddit() {
           const bodyMatch = post.selftext ? matchesKeywords(post.selftext) : false;
           
           if (!titleMatch && !bodyMatch) {
+            await saveIngestionRecord('reddit_ingestion', {
+              postId: normalizedPostId,
+              contentHash,
+              keywordMatched: false,
+              metadata: {
+                subreddit,
+                author: post.author || 'unknown',
+                title: post.title
+              }
+            });
             continue;
           }
+
+          await saveIngestionRecord('reddit_ingestion', {
+            postId: normalizedPostId,
+            contentHash,
+            keywordMatched: true,
+            metadata: {
+              subreddit,
+              author: post.author || 'unknown',
+              title: post.title
+            }
+          });
           
           stats.subreddits[subreddit].keywordFiltered++;
           stats.total.keywordFiltered++;
@@ -86,6 +126,7 @@ export async function scrapeReddit() {
             logger.error.log(`Error classifying opportunity: ${error.message}`);
             continue;
           }
+          await markIngestionClassified('reddit_ingestion', normalizedPostId);
           
           if (!classification.valid || classification.opportunityScore < 50) {
             await saveOpportunityPost({
@@ -106,6 +147,9 @@ export async function scrapeReddit() {
           stats.subreddits[subreddit].aiClassified++;
           stats.total.aiClassified++;
           
+          stats.subreddits[subreddit].aiClassified++;
+          stats.total.aiClassified++;
+          
           const persona = await getOptimalPersona('reddit', subreddit);
           const tone = await getOptimalTone('reddit', subreddit);
           
@@ -122,6 +166,7 @@ export async function scrapeReddit() {
           let resumePDFPath = null;
           let actionDecision = 'reply_only';
           let replyText = '';
+          let replyMode = 'outreach';
           let coverLetterJSON = null;
           let resumeJSON = null;
           
@@ -180,6 +225,7 @@ export async function scrapeReddit() {
             actionDecision: actionDecision,
             personaUsed: persona,
             toneUsed: tone,
+            replyMode: replyMode,
             replyTextSent: replyText,
             coverLetterJSON: coverLetterJSON,
             resumeJSON: resumeJSON

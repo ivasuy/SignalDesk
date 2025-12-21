@@ -1,4 +1,4 @@
-import { checkPostExists, savePost } from '../../utils/db.js';
+import { checkPostExists, savePost } from '../../db/posts.js';
 import { classifyOpportunity, evaluateHighValue, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
 import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';

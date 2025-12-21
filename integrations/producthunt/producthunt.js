@@ -1,5 +1,16 @@
 import { productHuntRequest } from './api.js';
-import { checkProductHuntPostExists, saveProductHuntPost, checkProductHuntCollabExists, saveProductHuntCollab } from '../../utils/db.js';
+import { 
+  checkProductHuntPostExists, 
+  saveProductHuntPost, 
+  checkProductHuntCollabExists, 
+  saveProductHuntCollab
+} from '../../db/posts.js';
+import { 
+  checkIngestionExists,
+  saveIngestionRecord,
+  markIngestionClassified,
+  generateContentHash
+} from '../../db/ingestion.js';
 import { evaluateBuildableIdea, evaluateCollabOpportunity } from '../../ai/ai.js';
 import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';
 import { generateCoverLetterAndResume } from '../../ai/ai.js';
@@ -147,6 +158,25 @@ export async function scrapeProductHunt() {
     for (const post of posts) {
       await sleep(2000);
       
+      const normalizedPostId = `ph-${post.id}`;
+      const contentHash = generateContentHash(post.name, post.description || post.tagline || '');
+      
+      const ingestionCheck = await checkIngestionExists('producthunt_ingestion', normalizedPostId, contentHash);
+      if (ingestionCheck.exists) {
+        continue;
+      }
+      
+      await saveIngestionRecord('producthunt_ingestion', {
+        postId: normalizedPostId,
+        contentHash,
+        keywordMatched: true,
+        metadata: {
+          name: post.name,
+          tagline: post.tagline,
+          url: post.url
+        }
+      });
+      
       const exists = await checkProductHuntPostExists(post.id);
       if (exists) {
         continue;
@@ -182,6 +212,8 @@ export async function scrapeProductHunt() {
         logger.error.log(`Error evaluating buildable idea: ${error.message}`);
         continue;
       }
+      
+      await markIngestionClassified('producthunt_ingestion', normalizedPostId);
       
       if (buildableEval.buildable_in_2_days && buildableEval.complexity === 'low') {
         stats.buildableEvaluated++;

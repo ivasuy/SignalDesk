@@ -1,0 +1,238 @@
+# =====================================================
+# PROJECT: Opportunity Automation Engine (Private Tool)
+# =====================================================
+#
+# Purpose:
+# - Scrapes opportunity sources (Reddit, GitHub, HN, Product Hunt)
+# - Classifies opportunities using OpenAI
+# - Scores opportunities (0–100)
+# - Sends paced WhatsApp messages
+# - Learns from user feedback over time
+#
+# This is a PRIVATE, single-user, unfair-advantage system.
+# Optimize for clarity, safety, and long-term maintainability.
+#
+# Cursor must FOLLOW these rules strictly.
+#
+
+# =====================================================
+# 1. DIRECTORY STRUCTURE (MANDATORY)
+# =====================================================
+
+/src
+  /integrations
+    /reddit
+    /github
+    /hackernews
+    /producthunt
+    /whatsapp
+  /ai
+  /queue
+  /db
+  index.js                 # App bootstrap
+
+
+# =====================================================
+# 2. NAMING CONVENTIONS
+# =====================================================
+
+Functions:
+- camelCase
+- Verb-first naming
+  Examples:
+    fetchRedditPosts()
+    classifyOpportunity()
+    enqueueDelivery()
+    normalizeText()
+
+Collections (MongoDB):
+- snake_case
+  Examples:
+    posts
+    delivery_queue
+    opportunity_feedback
+    opportunity_learning_metrics
+
+Variables:
+- descriptive, no abbreviations
+- avoid single-letter names outside loops
+
+# =====================================================
+# 3. COMMON LOGIC → utils.js (STRICT RULES)
+# =====================================================
+
+Problem:
+- Repetitive logic exists across files
+
+Solution:
+- Move ONLY PURE, SIDE-EFFECT-FREE helpers into utils.js
+
+utils.js MAY contain:
+- text normalization
+- safe JSON parsing
+- ID generation
+- hashing
+- date calculations
+- scoring helpers
+- string cleanup
+- array helpers
+
+utils.js MUST NOT contain:
+- database calls
+- API calls
+- logging
+- OpenAI logic
+- WhatsApp logic
+- side effects of any kind
+
+Rule:
+If it touches IO, network, DB, or state → NOT utils.js
+
+# =====================================================
+# 4. SEARCH & KEYWORD LOGIC → config.js
+# =====================================================
+
+Problem:
+- Keywords and search terms are scattered
+
+Solution:
+- ALL static data goes into config.js
+
+config.js MAY contain:
+- keyword arrays
+- platform search terms
+- role mappings
+- category mappings
+- scoring weights
+- platform limits
+- subreddit allow/deny lists
+
+config.js MUST contain ONLY:
+- plain objects
+- plain arrays
+- constants
+
+config.js MUST NOT contain:
+- functions
+- conditionals
+- loops
+- imports (except exporting constants)
+
+Example:
+export const GITHUB_KEYWORDS = [
+  "hiring",
+  "freelance",
+  "contract",
+  "paid",
+  "bounty",
+  "good first issue"
+];
+
+# =====================================================
+# 5. PLATFORM INTEGRATION RULES
+# =====================================================
+
+Each platform MUST:
+- Live in its own directory
+- Have its own scraper + parser
+- Output a NORMALIZED structure:
+  {
+    postId,
+    title,
+    content,
+    permalink,
+    author,
+    createdAt,
+    sourcePlatform,
+    sourceContext
+  }
+
+NO platform is allowed to:
+- Call OpenAI directly
+- Send WhatsApp messages directly
+- Write to delivery queue directly
+
+Platforms ONLY:
+- Fetch
+- Parse
+- Normalize
+- Save raw data
+
+# =====================================================
+# 6. AI USAGE RULES
+# =====================================================
+
+AI calls are EXPENSIVE.
+
+Rules:
+- No AI calls before keyword filtering
+- No AI calls for duplicate posts
+- No resume generation below score 80
+- No reply generation below score 50
+
+Classifier MUST:
+- Return valid, category, opportunityScore, reasoning
+- Be cached by postId hash
+
+Prompts:
+- Small
+- Deterministic
+- Structured output only
+
+NO dynamic prompt mutation yet.
+
+# =====================================================
+# 7. QUEUE & DELIVERY RULES
+# =====================================================
+
+- NEVER send messages immediately
+- ALWAYS enqueue
+- Queue worker controls pacing
+- MongoDB locking only
+- One message at a time
+- Human-like spacing enforced
+
+# =====================================================
+# 8. FEEDBACK & LEARNING RULES
+# =====================================================
+
+Feedback system MUST:
+- Store exactly what was sent (tone, persona, content)
+- Map feedback without NLP
+- Learn from success/failure
+- Influence routing, not prompts (for now)
+
+Feedback data is SACRED.
+Never overwrite it.
+
+# =====================================================
+# 9. CODE STYLE EXPECTATIONS
+# =====================================================
+
+- Functions under 80 lines
+- Files under 300 lines (refactor if exceeded)
+- No god files
+- Clear logging
+- Early returns
+- Explicit error handling
+
+Cursor MUST:
+- Refactor oversized files
+- Extract helpers
+- Reduce duplication
+- Keep logic boring and obvious
+
+# =====================================================
+# 10. PHILOSOPHY
+# =====================================================
+
+This is not a SaaS.
+This is not a framework.
+This is not a startup (yet).
+
+This is a PERSONAL, HIGH-LEVERAGE SYSTEM.
+
+Favor:
+- clarity over cleverness
+- safety over speed
+- boring code over magic

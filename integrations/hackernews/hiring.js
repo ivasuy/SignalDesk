@@ -1,29 +1,20 @@
 import { getNewStories, getTopStories, getItem, getUserSubmissions } from './api.js';
-import { checkPostExistsByPostId, saveOpportunityPost } from '../../utils/db.js';
-import { matchesKeywords } from '../../utils/utils.js';
+import { 
+  saveOpportunityPost
+} from '../../db/posts.js';
+import { 
+  checkIngestionExists,
+  saveIngestionRecord,
+  markIngestionClassified,
+  generateContentHash
+} from '../../db/ingestion.js';
+import { matchesKeywords, matchesHiringTitle, filterByTimeBuckets, processBatchesSequentially } from '../../utils/utils.js';
 import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
 import { classifyOpportunity, generateReply, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
 import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';
 import { logger } from '../../utils/logger.js';
 import { getOptimalPersona, getOptimalTone } from '../../utils/learning.js';
-
-const TARGET_PATTERNS = [
-  'ask hn: who is hiring',
-  'ask hn: who wants to be hired',
-  'freelancer? seeking freelancer'
-];
-
-function matchesHiringTitle(title) {
-  if (!title) return false;
-  
-  const titleLower = title.toLowerCase()
-    .replace(/\([^)]*\)/g, '') // Remove parentheses (month/year)
-    .replace(/\[[^\]]*\]/g, '') // Remove brackets
-    .trim();
-  
-  return TARGET_PATTERNS.some(pattern => titleLower.includes(pattern));
-}
 
 async function findLatestHiringPost() {
   const ninetyDaysAgo = Math.floor(Date.now() / 1000) - (90 * 24 * 60 * 60);
@@ -122,32 +113,47 @@ export async function scrapeAskHiring() {
     stats.scraped = comments.length;
     logger.hackernews.log(`Processing ${comments.length} comments from "${hiringPost.title}"`);
     
-    const now = Math.floor(Date.now() / 1000);
-    const oneDayAgo = now - (24 * 60 * 60);
-    const twoDaysAgo = now - (2 * 24 * 60 * 60);
-    const oneWeekAgo = now - (7 * 24 * 60 * 60);
+    const timeBuckets = filterByTimeBuckets(comments, 'time');
     
-    const sortedComments = comments
-      .filter(c => c.time >= oneWeekAgo)
-      .sort((a, b) => b.time - a.time);
-    
-    const comments24h = sortedComments.filter(c => c.time >= oneDayAgo);
-    const comments1day = sortedComments.filter(c => c.time >= twoDaysAgo && c.time < oneDayAgo);
-    const commentsWeek = sortedComments.filter(c => c.time >= oneWeekAgo && c.time < twoDaysAgo);
-    
-    logger.hackernews.log(`Prioritizing: ${comments24h.length} (last 24h) → ${comments1day.length} (1-2 days) → ${commentsWeek.length} (2-7 days)`);
+    logger.hackernews.log(`Prioritizing: ${timeBuckets.last24h.length} (last 24h) → ${timeBuckets.oneToTwoDays.length} (1-2 days) → ${timeBuckets.twoToSevenDays.length} (2-7 days)`);
     
     const processComments = async (commentBatch, batchName) => {
       for (const comment of commentBatch) {
         const normalized = normalizeComment(comment, hiringPost);
         
-        const exists = await checkPostExistsByPostId(normalized.id);
-        if (exists) continue;
+        const contentHash = generateContentHash(normalized.title, normalized.selftext);
+        
+        const ingestionCheck = await checkIngestionExists('hackernews_hiring_ingestion', normalized.id, contentHash);
+        if (ingestionCheck.exists) {
+          continue;
+        }
         
         const titleMatch = matchesKeywords(normalized.title);
         const bodyMatch = matchesKeywords(normalized.selftext);
         
-        if (!titleMatch && !bodyMatch) continue;
+        if (!titleMatch && !bodyMatch) {
+          await saveIngestionRecord('hackernews_hiring_ingestion', {
+            postId: normalized.id,
+            contentHash,
+            keywordMatched: false,
+            metadata: {
+              author: normalized.author,
+              title: normalized.title
+            }
+          });
+          continue;
+        }
+        
+        // Store ingestion record
+        await saveIngestionRecord('hackernews_hiring_ingestion', {
+          postId: normalized.id,
+          contentHash,
+          keywordMatched: true,
+          metadata: {
+            author: normalized.author,
+            title: normalized.title
+          }
+        });
         
         stats.keywordFiltered++;
         
@@ -162,6 +168,8 @@ export async function scrapeAskHiring() {
           logger.error.log(`Error classifying opportunity: ${error.message}`);
           continue;
         }
+        
+        await markIngestionClassified('hackernews_hiring_ingestion', normalized.id);
         
         if (!classification.valid || classification.opportunityScore < 50) {
           await saveOpportunityPost({
@@ -196,6 +204,7 @@ export async function scrapeAskHiring() {
         let resumePDFPath = null;
         let actionDecision = 'reply_only';
         let replyText = '';
+        let replyMode = 'outreach';
         let coverLetterJSON = null;
         let resumeJSON = null;
         
@@ -250,6 +259,7 @@ export async function scrapeAskHiring() {
           actionDecision: actionDecision,
           personaUsed: persona,
           toneUsed: tone,
+          replyMode: replyMode,
           replyTextSent: replyText,
           coverLetterJSON: coverLetterJSON,
           resumeJSON: resumeJSON
@@ -263,9 +273,7 @@ export async function scrapeAskHiring() {
       }
     };
     
-    await processComments(comments24h, '24h');
-    await processComments(comments1day, '1day');
-    await processComments(commentsWeek, 'week');
+    await processBatchesSequentially(timeBuckets, processComments);
     
     return stats;
   } catch (error) {

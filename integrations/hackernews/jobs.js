@@ -1,6 +1,14 @@
 import { getJobStories, getItem } from './api.js';
-import { checkPostExistsByPostId, saveOpportunityPost } from '../../utils/db.js';
-import { matchesKeywords, isForHirePost } from '../../utils/utils.js';
+import { 
+  saveOpportunityPost
+} from '../../db/posts.js';
+import { 
+  checkIngestionExists,
+  saveIngestionRecord,
+  markIngestionClassified,
+  generateContentHash
+} from '../../db/ingestion.js';
+import { matchesKeywords, isForHirePost, filterByTimeBuckets, processBatchesSequentially } from '../../utils/utils.js';
 import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
 import { classifyOpportunity, generateReply, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
@@ -78,27 +86,18 @@ export async function scrapeJobs() {
   
   try {
     const jobIds = await getJobStories();
-    const now = Math.floor(Date.now() / 1000);
-    const oneDayAgo = now - (24 * 60 * 60);
-    const twoDaysAgo = now - (2 * 24 * 60 * 60);
-    const oneWeekAgo = now - (7 * 24 * 60 * 60);
-    
     logger.hackernews.log(`Processing ${jobIds.length} job stories`);
     
     const jobs = [];
     for (const jobId of jobIds) {
       const job = await getItem(jobId);
       if (!job || !job.title || !job.time) continue;
-      if (job.time < oneWeekAgo) continue;
       jobs.push(job);
     }
     
-    const sortedJobs = jobs.sort((a, b) => b.time - a.time);
-    const jobs24h = sortedJobs.filter(j => j.time >= oneDayAgo);
-    const jobs1day = sortedJobs.filter(j => j.time >= twoDaysAgo && j.time < oneDayAgo);
-    const jobsWeek = sortedJobs.filter(j => j.time >= oneWeekAgo && j.time < twoDaysAgo);
+    const timeBuckets = filterByTimeBuckets(jobs, 'time');
     
-    logger.hackernews.log(`Prioritizing: ${jobs24h.length} (last 24h) → ${jobs1day.length} (1-2 days) → ${jobsWeek.length} (2-7 days)`);
+    logger.hackernews.log(`Prioritizing: ${timeBuckets.last24h.length} (last 24h) → ${timeBuckets.oneToTwoDays.length} (1-2 days) → ${timeBuckets.twoToSevenDays.length} (2-7 days)`);
     
     const processJobs = async (jobBatch, batchName) => {
       for (const job of jobBatch) {
@@ -115,13 +114,38 @@ export async function scrapeJobs() {
         };
         const normalized = normalizeJob(jobWithDescription);
         
-        const exists = await checkPostExistsByPostId(normalized.id);
-        if (exists) continue;
+        const contentHash = generateContentHash(normalized.title, normalized.selftext);
+        
+        const ingestionCheck = await checkIngestionExists('hackernews_jobs_ingestion', normalized.id, contentHash);
+        if (ingestionCheck.exists) {
+          continue;
+        }
         
         const titleMatch = matchesKeywords(normalized.title);
         const bodyMatch = matchesKeywords(normalized.selftext);
         
-        if (!titleMatch && !bodyMatch) continue;
+        if (!titleMatch && !bodyMatch) {
+          await saveIngestionRecord('hackernews_jobs_ingestion', {
+            postId: normalized.id,
+            contentHash,
+            keywordMatched: false,
+            metadata: {
+              author: normalized.author,
+              title: normalized.title
+            }
+          });
+          continue;
+        }
+        
+        await saveIngestionRecord('hackernews_jobs_ingestion', {
+          postId: normalized.id,
+          contentHash,
+          keywordMatched: true,
+          metadata: {
+            author: normalized.author,
+            title: normalized.title
+          }
+        });
         
         stats.keywordFiltered++;
         
@@ -136,6 +160,8 @@ export async function scrapeJobs() {
           logger.error.log(`Error classifying opportunity: ${error.message}`);
           continue;
         }
+        
+        await markIngestionClassified('hackernews_jobs_ingestion', normalized.id);
         
         if (!classification.valid || classification.opportunityScore < 50) {
           await saveOpportunityPost({
@@ -170,6 +196,7 @@ export async function scrapeJobs() {
         let resumePDFPath = null;
         let actionDecision = 'reply_only';
         let replyText = '';
+        let replyMode = 'outreach'; 
         let coverLetterJSON = null;
         let resumeJSON = null;
         
@@ -224,6 +251,7 @@ export async function scrapeJobs() {
           actionDecision: actionDecision,
           personaUsed: persona,
           toneUsed: tone,
+          replyMode: replyMode,
           replyTextSent: replyText,
           coverLetterJSON: coverLetterJSON,
           resumeJSON: resumeJSON
@@ -237,9 +265,7 @@ export async function scrapeJobs() {
       }
     };
     
-    await processJobs(jobs24h, '24h');
-    await processJobs(jobs1day, '1day');
-    await processJobs(jobsWeek, 'week');
+    await processBatchesSequentially(timeBuckets, processJobs);
     
     return stats;
   } catch (error) {

@@ -3,12 +3,13 @@ const { Client, LocalAuth, MessageMedia } = pkg;
 import qrcode from 'qrcode-terminal';
 import dotenv from 'dotenv';
 import { execSync, exec } from 'child_process';
-import { existsSync, unlinkSync, rmSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../../utils/logger.js';
-import { connectDB } from '../../utils/db.js';
+import { connectDB } from '../../db/connection.js';
+import { setupFeedbackHandler, sendDailyFeedbackForm as sendFeedbackForm } from './feedback.js';
 
 dotenv.config();
 
@@ -17,7 +18,6 @@ const __dirname = dirname(__filename);
 
 let client = null;
 let isReady = false;
-let feedbackHandler = null;
 
 function getChromePath() {
   const chromePaths = [
@@ -45,7 +45,7 @@ function getChromePath() {
       }
     }
   } catch (error) {
-    // Fall through to default
+    
   }
 
   return undefined;
@@ -150,7 +150,7 @@ export function initializeWhatsApp() {
       client.on('ready', () => {
         isReady = true;
         logger.whatsapp.ready();
-        setupFeedbackHandler();
+        setupFeedbackHandler(client, formatPhoneNumber);
         resolve();
       });
 
@@ -207,15 +207,6 @@ function formatPhoneNumber(number) {
   return cleaned + '@c.us';
 }
 
-const FEEDBACK_BLOCK = `---
-FEEDBACK (reply with ONE letter only):
-[A] No response yet
-[B] Rejected
-[C] Got a reply
-[D] Call scheduled
-[E] Hired / Collab started
----`;
-
 export async function sendWhatsAppMessage(message, pdfPath = null, postData = null) {
   if (!isReady || !client) {
     throw new Error('WhatsApp client is not ready');
@@ -229,10 +220,8 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
     
     const chatId = formatPhoneNumber(receiverNumber);
     
-    const fullMessage = message + '\n\n' + FEEDBACK_BLOCK;
-    
     const sendMessage = async (targetChatId) => {
-      await client.sendMessage(targetChatId, fullMessage);
+      await client.sendMessage(targetChatId, message);
       
       if (pdfPath && existsSync(pdfPath)) {
         const media = MessageMedia.fromFilePath(pdfPath);
@@ -246,7 +235,7 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
       logger.whatsapp.sent();
       
       if (postData) {
-        await updatePostAfterSending(postData);
+          await updatePostAfterSending(postData);
       }
     } catch (sendError) {
       if (sendError.message.includes('LID')) {
@@ -267,6 +256,13 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
   }
 }
 
+export async function sendDailyFeedbackForm() {
+  if (!isReady || !client) {
+    throw new Error('WhatsApp client is not ready');
+  }
+  return await sendFeedbackForm(client, formatPhoneNumber);
+}
+
 async function updatePostAfterSending(postData) {
   try {
     const db = await connectDB();
@@ -278,8 +274,10 @@ async function updatePostAfterSending(postData) {
           replyTextSent: postData.replyTextSent || '',
           personaUsed: postData.personaUsed || 'engineer',
           toneUsed: postData.toneUsed || 'professional',
+          replyMode: postData.replyMode || null, 
           sentAt: new Date(),
           feedbackStatus: 'pending',
+          feedbackRequestedAt: null,
           actionDecision: postData.actionDecision || 'reply_only',
           coverLetterJSON: postData.coverLetterJSON || null,
           resumeJSON: postData.resumeJSON || null
@@ -291,84 +289,5 @@ async function updatePostAfterSending(postData) {
   }
 }
 
-function setupFeedbackHandler() {
-  if (!client) return;
-  
-  client.on('message', async (message) => {
-    try {
-      const receiverNumber = process.env.RECEIVER_WHATSAPP_NUMBER;
-      if (!receiverNumber) return;
-      
-      const chatId = formatPhoneNumber(receiverNumber);
-      const messageChatId = message.from;
-      
-      if (messageChatId !== chatId && !messageChatId.includes(receiverNumber.replace(/[^\d]/g, ''))) {
-        return;
-      }
-      
-      const body = message.body?.trim().toUpperCase();
-      if (!body || body.length !== 1) return;
-      
-      if (!['A', 'B', 'C', 'D', 'E'].includes(body)) return;
-      
-      await processFeedback(body);
-    } catch (error) {
-      logger.error.log(`Error processing feedback: ${error.message}`);
-    }
-  });
-}
 
-async function processFeedback(feedbackLetter) {
-  try {
-    const db = await connectDB();
-    
-    const feedbackMap = {
-      'A': 'no_response',
-      'B': 'rejected',
-      'C': 'replied',
-      'D': 'call',
-      'E': null
-    };
-    
-    const feedbackValue = feedbackMap[feedbackLetter];
-    
-    const mostRecentPending = await db.collection('posts').findOne(
-      { feedbackStatus: 'pending' },
-      { sort: { sentAt: -1 } }
-    );
-    
-    if (!mostRecentPending) {
-      logger.whatsapp.log('No pending feedback found');
-      return;
-    }
-    
-    let finalFeedback = feedbackValue;
-    if (feedbackLetter === 'E') {
-      finalFeedback = mostRecentPending.category === 'collab' ? 'collab_started' : 'hired';
-    }
-    
-    const now = new Date();
-    const sentAt = mostRecentPending.sentAt || mostRecentPending.createdAt;
-    const responseDelayHours = sentAt ? ((now - new Date(sentAt)) / (1000 * 60 * 60)) : null;
-    
-    await db.collection('posts').updateOne(
-      { _id: mostRecentPending._id },
-      {
-        $set: {
-          feedbackStatus: 'received',
-          userFeedback: finalFeedback,
-          responseDelayHours: responseDelayHours
-        }
-      }
-    );
-    
-    logger.whatsapp.log(`Feedback received: ${feedbackLetter} → ${finalFeedback}`);
-  } catch (error) {
-    logger.error.log(`Error processing feedback: ${error.message}`);
-  }
-}
-
-export function setFeedbackHandler(handler) {
-  feedbackHandler = handler;
-}
 

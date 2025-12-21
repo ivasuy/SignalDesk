@@ -6,8 +6,9 @@ import { scrapeHackerNews } from "./integrations/hackernews/hacker-news.js";
 import { scrapeWellfound } from "./integrations/wellfound/wellfound.js";
 import { scrapeProductHunt } from "./integrations/producthunt/producthunt.js";
 import { scrapeGitHub } from "./integrations/github/github.js";
-import { connectDB, cleanupOldPosts, closeDB } from "./utils/db.js";
-import { initializeWhatsApp, cleanupWhatsApp } from "./integrations/whatsapp/whatsapp.js";
+import { connectDB, closeDB } from "./db/connection.js";
+import { cleanupOldPosts } from "./db/cleanup.js";
+import { initializeWhatsApp, cleanupWhatsApp, sendDailyFeedbackForm } from "./integrations/whatsapp/whatsapp.js";
 import { logger } from "./utils/logger.js";
 import { runLearningCycle } from "./utils/learning.js";
 
@@ -25,6 +26,7 @@ async function start() {
     cron.schedule("0 0 * * *", scrapeGitHub);
     cron.schedule("0 0 */14 * *", cleanupOldPosts);
     cron.schedule("0 1 * * *", runLearningCycle);
+    cron.schedule("0 22 * * *", sendDailyFeedbackForm);
 
     logger.info(
       `${chalk.hex("#FF4500")(
@@ -56,14 +58,14 @@ async function start() {
 
 process.on('SIGINT', async () => {
   logger.info('Shutting down gracefully...');
-  await cleanupWhatsApp();
+  // await cleanupWhatsApp();
   await closeDB();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   logger.info('Shutting down gracefully...');
-  await cleanupWhatsApp();
+  // await cleanupWhatsApp();
   await closeDB();
   process.exit(0);
 });

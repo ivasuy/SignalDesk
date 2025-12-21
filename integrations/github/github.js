@@ -1,5 +1,15 @@
 import { searchIssues } from './api.js';
-import { checkPostExistsByPostId, saveOpportunityPost } from '../../utils/db.js';
+import { 
+  saveOpportunityPost
+} from '../../db/posts.js';
+import { 
+  checkIngestionExists,
+  saveIngestionRecord,
+  markIngestionClassified,
+  generateContentHash
+} from '../../db/ingestion.js';
+import { buildGitHubSearchQueries } from '../../utils/utils.js';
+import { matchesSkillFilter, bucketByRecency, processBatchesWithEarlyStop } from '../../utils/utils.js';
 import { classifyOpportunity, generateReply, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
 import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';
@@ -41,28 +51,6 @@ function loadResumeSkills() {
   }
 }
 
-function matchesSkillFilter(title, body, skills) {
-  const text = `${title} ${body}`.toLowerCase();
-  
-  const skillKeywords = [
-    'java',
-    'spring',
-    'spring boot',
-    'node',
-    'nestjs',
-    'react',
-    'nextjs',
-    'typescript',
-    'mongodb',
-    'api',
-    'backend',
-    'frontend',
-    'fullstack'
-  ];
-  
-  return skillKeywords.some(keyword => text.includes(keyword));
-}
-
 function normalizeIssue(issue) {
   const repoFullName = issue.repository_url ? issue.repository_url.split('/repos/')[1] : 'unknown';
   return {
@@ -77,44 +65,6 @@ function normalizeIssue(issue) {
   };
 }
 
-function bucketByRecency(issues) {
-  const now = Date.now();
-  const oneDay = 24 * 60 * 60 * 1000;
-  const twoDays = 2 * oneDay;
-  const sevenDays = 7 * oneDay;
-  
-  const buckets = {
-    last24h: [],
-    oneToTwoDays: [],
-    twoToSevenDays: []
-  };
-  
-  for (const issue of issues) {
-    const created = new Date(issue.created_at).getTime();
-    const age = now - created;
-    
-    if (age <= oneDay) {
-      buckets.last24h.push(issue);
-    } else if (age <= twoDays) {
-      buckets.oneToTwoDays.push(issue);
-    } else if (age <= sevenDays) {
-      buckets.twoToSevenDays.push(issue);
-    }
-  }
-  
-  return buckets;
-}
-
-function buildSearchQueries(dateStr) {
-  return [
-    `is:issue is:open label:"help wanted" created:>=${dateStr}`,
-    `is:issue is:open label:"good first issue" created:>=${dateStr}`,
-    `is:issue is:open label:"contract" created:>=${dateStr}`,
-    `is:issue is:open "looking for" created:>=${dateStr}`,
-    `is:issue is:open "need help" created:>=${dateStr}`,
-    `is:issue is:open "seeking developer" created:>=${dateStr}`
-  ];
-}
 
 export async function scrapeGitHub() {
   const stats = {
@@ -136,7 +86,7 @@ export async function scrapeGitHub() {
     
     logger.github.log(`Searching for issues created after ${dateStr}`);
     
-    const queries = buildSearchQueries(dateStr);
+    const queries = buildGitHubSearchQueries(dateStr);
     logger.github.log(`Executing ${queries.length} search queries`);
     
     const allIssues = [];
@@ -185,14 +135,39 @@ export async function scrapeGitHub() {
       for (const issue of issues) {
         const normalized = normalizeIssue(issue);
         
-        const titleMatch = matchesSkillFilter(normalized.title, normalized.selftext, skills);
-        if (!titleMatch) {
-          stats.skillFiltered++;
+        const contentHash = generateContentHash(normalized.title, normalized.selftext);
+        
+        const ingestionCheck = await checkIngestionExists('github_ingestion', normalized.id, contentHash);
+        if (ingestionCheck.exists) {
           continue;
         }
         
-        const exists = await checkPostExistsByPostId(normalized.id);
-        if (exists) continue;
+        const titleMatch = matchesSkillFilter(normalized.title, normalized.selftext, skills.length > 0 ? skills : []);
+        if (!titleMatch) {
+          stats.skillFiltered++;
+          await saveIngestionRecord('github_ingestion', {
+            postId: normalized.id,
+            contentHash,
+            keywordMatched: false,
+            metadata: {
+              repoFullName: normalized.repoFullName,
+              author: normalized.author,
+              title: normalized.title
+            }
+          });
+          continue;
+        }
+        
+        await saveIngestionRecord('github_ingestion', {
+          postId: normalized.id,
+          contentHash,
+          keywordMatched: true,
+          metadata: {
+            repoFullName: normalized.repoFullName,
+            author: normalized.author,
+            title: normalized.title
+          }
+        });
         
         const fullText = `${normalized.title}\n\n${normalized.selftext}`;
         startLoader(`Classifying GitHub opportunity...`);
@@ -205,6 +180,8 @@ export async function scrapeGitHub() {
           logger.error.log(`Error classifying opportunity: ${error.message}`);
           continue;
         }
+        
+        await markIngestionClassified('github_ingestion', normalized.id);
         
         if (!classification.valid || classification.opportunityScore < 50) {
           await saveOpportunityPost({
@@ -238,10 +215,15 @@ export async function scrapeGitHub() {
         let resumePDFPath = null;
         let actionDecision = 'reply_only';
         let replyText = '';
+        let replyMode = 'none';
         let coverLetterJSON = null;
         let resumeJSON = null;
         
-        if (classification.opportunityScore >= 80) {
+        const shouldGenerateReply = classification.opportunityScore >= 80 && 
+                                    (classification.category === 'freelance' || classification.category === 'collab');
+        
+        if (shouldGenerateReply) {
+          replyMode = 'technical_interest';
           actionDecision = 'reply_plus_resume';
           
           startLoader(`Generating cover letter & resume...`);
@@ -266,16 +248,7 @@ export async function scrapeGitHub() {
             continue;
           }
         } else {
-          startLoader(`Generating reply...`);
-          try {
-            replyText = await generateReply(normalized.title, normalized.selftext, classification.category, persona, tone);
-            message += `Suggested Reply:\n${replyText}\n\n`;
-            stopLoader();
-          } catch (error) {
-            stopLoader();
-            logger.error.log(`Error generating reply: ${error.message}`);
-            continue;
-          }
+          message += `Summary: ${normalized.selftext.substring(0, 200)}...\n\n`;
         }
         
         const postData = {
@@ -291,6 +264,7 @@ export async function scrapeGitHub() {
           actionDecision: actionDecision,
           personaUsed: persona,
           toneUsed: tone,
+          replyMode: replyMode,
           replyTextSent: replyText,
           coverLetterJSON: coverLetterJSON,
           resumeJSON: resumeJSON
@@ -307,22 +281,7 @@ export async function scrapeGitHub() {
       return validOpportunities;
     };
     
-    let processed24h = await processBucket(buckets.last24h, 'last24h');
-    logger.github.log(`Processed 24h bucket: ${processed24h} opportunities`);
-    
-    if (processed24h === 0) {
-      let processed1to2 = await processBucket(buckets.oneToTwoDays, 'oneToTwoDays');
-      logger.github.log(`Processed 1-2d bucket: ${processed1to2} opportunities`);
-      
-      if (processed1to2 === 0) {
-        logger.github.log('Two consecutive buckets produced zero opportunities. Stopping early.');
-      } else {
-        await processBucket(buckets.twoToSevenDays, 'twoToSevenDays');
-      }
-    } else {
-      await processBucket(buckets.oneToTwoDays, 'oneToTwoDays');
-      await processBucket(buckets.twoToSevenDays, 'twoToSevenDays');
-    }
+    await processBatchesWithEarlyStop(buckets, processBucket, logger.github);
     
     logger.github.summary();
     logger.stats.github(
