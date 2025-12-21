@@ -1,0 +1,148 @@
+{
+  "profile": {
+    "name": "Vasu Yadav",
+    "primary_role": "Software Developer",
+    "email": "vasu7yadav@gmail.com",
+    "phone": "+91 7300801153",
+    "github": "https://github.com/ivasuy",
+    "linkedin": "https://www.linkedin.com/in/ivasuy/",
+    "portfolio": "https://my-portfolio-orpin-alpha-89.vercel.app/",
+    "experience_level": "Junior to Mid-level",
+    "summary": "Software Developer with experience building and maintaining SaaS platforms, dashboards, and backend systems in startup environments. Hands-on experience with full-stack development, AI integrations, social media APIs, and cloud infrastructure. Comfortable owning features end-to-end, working across frontend, backend, and deployment."
+  },
+  "experience": [
+    {
+      "company": "PlatterHub AI",
+      "role": "Junior Software Developer",
+      "duration": "April 2024 – Present",
+      "work_description": "Built the Brand Dashboard from scratch to allow brands to create, manage, and collaborate on marketing campaigns. Implemented AI-based campaign creation using Google Gemini (Vertex AI), which analyzes brand websites and open-source information to generate campaign suggestions. Developed features for managing existing campaigns, inviting users, and handling brand-level access through a brand manager view. Built an Influencer Dashboard to enable influencers to onboard, connect with brands, participate in campaigns, and manage social media posts. Implemented backend services for onboarding brands and influencers via Facebook and Instagram, handling authentication, metrics retrieval, post creation, and scheduling. Worked on deployment and maintenance of production systems and managed cloud infrastructure.",
+      "tech_stack": [
+        "Next.js",
+        "MongoDB",
+        "Google Gemini (Vertex AI)",
+        "Facebook Graph API",
+        "Instagram Graph API",
+        "Docker",
+        "Nginx",
+        "Google Cloud Platform"
+      ],
+      "links": [
+        "https://brand.platterhub.ai/login",
+        "https://web-app.platterhub.ai",
+        "https://phconnect.platterhub.ai"
+      ]
+    },
+    {
+      "company": "Bharat Mandi",
+      "role": "Trainee Software Developer",
+      "duration": "Oct 2023 – Dec 2024",
+      "work_description": "Developed and maintained backend services for inventory, store, farm, and farmer management systems. Worked on Admin panel APIs as well as APIs consumed by the Farmer app and RM app. Built and enhanced frontend components for internal dashboards and data visualization. Collaborated with cross-functional teams to improve backend and frontend integration and maintain production systems.",
+      "tech_stack": [
+        "Java",
+        "Spring Boot",
+        "Spring Security",
+        "JPA",
+        "Hibernate",
+        "React.js",
+        "Next.js",
+        "Material UI",
+        "MySQL",
+        "PostgreSQL"
+      ]
+    },
+    {
+      "company": "Busa Tech Services",
+      "role": "Software Development Intern (Backend)",
+      "duration": "Jun 2023 – Aug 2023",
+      "work_description": "Contributed to backend development and deployment tasks. Assisted in deploying the company website on AWS using S3, Route 53, and CloudFront with SSL. Built REST APIs integrated with Google Sheets API to manage client data. Created and maintained backend API documentation and implemented email communication workflows.",
+      "tech_stack": [
+        "Java",
+        "REST APIs",
+        "Google Sheets API",
+        "AWS S3",
+        "AWS Route 53",
+        "AWS CloudFront",
+        "Zoho"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "Venture Vault",
+      "duration": "Jun 2024 – Present",
+      "description": "Developed a platform for discovering and validating startup ideas. Integrated OpenAI APIs to analyze industry ideas and generate actionable feedback. Implemented real-time chat functionality to support collaboration and curated large datasets from Reddit to identify common pain points and idea patterns.",
+      "tech_stack": [
+        "Next.js",
+        "Spring Boot",
+        "MongoDB",
+        "OpenAI API",
+        "WebSockets",
+        "STOMP"
+      ]
+    },
+    {
+      "name": "Wingman",
+      "duration": "Jan 2025 – Present",
+      "description": "Built a Chrome extension for AI-powered meeting transcription and contextual responses. Implemented offline storage for meeting transcripts and optimized rendering to support low-end devices.",
+      "tech_stack": ["WebGL", "OpenAI API", "Chrome Extension APIs"]
+    }
+  ],
+  "education": [
+    {
+      "institution": "Jaypee University of Information Technology",
+      "degree": "B.Tech in Computer Science",
+      "location": "Solan, Himachal Pradesh",
+      "graduation_date": "June 2024",
+      "cgpa": "8.4/10"
+    },
+    {
+      "institution": "Dewan Public School",
+      "degree": "CBSE Class XII",
+      "location": "Meerut, Uttar Pradesh",
+      "graduation_date": "May 2020"
+    }
+  ],
+  "skills": {
+    "languages": [
+      "Java",
+      "JavaScript",
+      "TypeScript",
+      "C",
+      "C++",
+      "HTML",
+      "CSS"
+    ],
+    "frameworks_and_libraries": [
+      "Spring Boot",
+      "Spring Security",
+      "Spring Cloud",
+      "Hibernate",
+      "JPA",
+      "React.js",
+      "Next.js",
+      "NestJS",
+      "Tailwind CSS"
+    ],
+    "databases": ["MySQL", "PostgreSQL", "MongoDB"],
+    "cloud_and_tools": [
+      "AWS (S3, Route 53, CloudFront)",
+      "Google Cloud Platform (Compute Engine, VPC, IAM, Buckets, Artifact Registry)",
+      "Docker",
+      "Nginx",
+      "Firebase",
+      "Git",
+      "GitHub",
+      "VS Code",
+      "IntelliJ IDEA"
+    ],
+    "other": [
+      "REST APIs",
+      "Microservices",
+      "JWT Authentication",
+      "OAuth",
+      "Swagger / OpenAPI",
+      "OpenAI APIs",
+      "Google Gemini / Vertex AI"
+    ]
+  }
+}

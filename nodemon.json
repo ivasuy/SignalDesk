@@ -1,0 +1,18 @@
+{
+  "watch": [
+    "integrations",
+    "ai",
+    "utils",
+    "index.js",
+    "resume.json"
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "node_modules",
+    "output",
+    "*.pdf",
+    ".git"
+  ],
+  "delay": 1000
+}
+
