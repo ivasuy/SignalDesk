@@ -1,20 +1,22 @@
 import { getJobStories, getItem } from './api.js';
 import { 
-  saveOpportunityPost
-} from '../../db/posts.js';
-import { 
   checkIngestionExists,
   saveIngestionRecord,
-  markIngestionClassified,
   generateContentHash
 } from '../../db/ingestion.js';
 import { matchesKeywords, isForHirePost, filterByTimeBuckets, processBatchesSequentially } from '../../utils/utils.js';
 import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
-import { classifyOpportunity, generateReply, generateCoverLetterAndResume } from '../../ai/ai.js';
-import { startLoader, stopLoader } from '../../utils/loader.js';
-import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';
-import { logger } from '../../utils/logger.js';
-import { getOptimalPersona, getOptimalTone } from '../../utils/learning.js';
+import { addToClassificationBuffer } from '../../db/buffer.js';
+import { 
+  logPlatformStart, 
+  logPlatformComplete, 
+  logPlatformSummary,
+  logError,
+  logPipelineState,
+  formatISTTime
+} from '../../logs/index.js';
+import { calculateBatchSize } from '../../utils/utils.js';
+import { connectDB } from '../../db/connection.js';
 
 function normalizeJob(job) {
   const cleanedTitle = cleanTitle(job.title || 'Hacker News Job');
@@ -76,17 +78,32 @@ async function fetchJobDescription(job) {
 }
 
 export async function scrapeJobs() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hour = String(now.getHours()).padStart(2, '0');
+  const runId = `hackernews-jobs-${year}${month}${day}-${hour}`;
+  
+  logPlatformStart('hackernews', runId);
+  
   const stats = {
     scraped: 0,
     keywordFiltered: 0,
     aiClassified: 0,
     opportunities: 0,
-    highValue: 0
+    highValue: 0,
+    errors: 0,
+    dedupCounts: {
+      already_classified: 0,
+      already_sent: 0,
+      already_in_buffer: 0
+    }
   };
   
   try {
+    
     const jobIds = await getJobStories();
-    logger.hackernews.log(`Processing ${jobIds.length} job stories`);
     
     const jobs = [];
     for (const jobId of jobIds) {
@@ -96,8 +113,6 @@ export async function scrapeJobs() {
     }
     
     const timeBuckets = filterByTimeBuckets(jobs, 'time');
-    
-    logger.hackernews.log(`Prioritizing: ${timeBuckets.last24h.length} (last 24h) → ${timeBuckets.oneToTwoDays.length} (1-2 days) → ${timeBuckets.twoToSevenDays.length} (2-7 days)`);
     
     const processJobs = async (jobBatch, batchName) => {
       for (const job of jobBatch) {
@@ -118,6 +133,7 @@ export async function scrapeJobs() {
         
         const ingestionCheck = await checkIngestionExists('hackernews_jobs_ingestion', normalized.id, contentHash);
         if (ingestionCheck.exists) {
+          stats.dedupCounts.already_classified++;
           continue;
         }
         
@@ -149,127 +165,62 @@ export async function scrapeJobs() {
         
         stats.keywordFiltered++;
         
-        const fullText = `${normalized.title}\n\n${normalized.selftext}`;
-        startLoader(`Classifying Hacker News job...`);
-        let classification;
-        try {
-          classification = await classifyOpportunity(fullText, normalized.id);
-          stopLoader();
-        } catch (error) {
-          stopLoader();
-          logger.error.log(`Error classifying opportunity: ${error.message}`);
-          continue;
-        }
-        
-        await markIngestionClassified('hackernews_jobs_ingestion', normalized.id);
-        
-        if (!classification.valid || classification.opportunityScore < 50) {
-          await saveOpportunityPost({
-            postId: normalized.id,
-            sourcePlatform: 'hn',
-            sourceContext: 'jobs',
-            title: normalized.title,
-            permalink: normalized.permalink,
-            author: normalized.author,
-            selftext: normalized.selftext || '',
-            category: classification.category,
-            opportunityScore: classification.opportunityScore,
-            actionDecision: 'reject'
-          });
-          continue;
-        }
-        
-        stats.aiClassified++;
-        
-        const persona = await getOptimalPersona('hn', 'jobs');
-        const tone = await getOptimalTone('hn', 'jobs');
-        
-        const jobLink = normalized.jobUrl || normalized.permalink;
-        
-        let message = `Category: ${classification.category}\n`;
-        message += `Score: ${classification.opportunityScore}\n`;
-        message += `Source: Hacker News\n\n`;
-        message += `Title: ${normalized.title}\n\n`;
-        message += `Job Link: ${jobLink}\n\n`;
-        message += `---\n\n`;
-        
-        let resumePDFPath = null;
-        let actionDecision = 'reply_only';
-        let replyText = '';
-        let replyMode = 'outreach'; 
-        let coverLetterJSON = null;
-        let resumeJSON = null;
-        
-        if (classification.opportunityScore >= 80) {
-          stats.highValue++;
-          actionDecision = 'reply_plus_resume';
-          
-          startLoader(`Generating cover letter & resume...`);
-          try {
-            const { coverLetter, resume } = await generateCoverLetterAndResume(
-              normalized.title,
-              normalized.selftext,
-              classification.category
-            );
-            
-            resumePDFPath = resume;
-            replyText = coverLetter;
-            coverLetterJSON = { text: coverLetter };
-            
-            message += `Cover Letter:\n${coverLetter}\n\n`;
-            message += `---\n\n`;
-            message += `Tailored Resume PDF attached below\n\n`;
-            stopLoader();
-          } catch (error) {
-            stopLoader();
-            logger.error.log(`Error generating cover letter/resume: ${error.message}`);
-            continue;
-          }
-        } else {
-          startLoader(`Generating reply...`);
-          try {
-            replyText = await generateReply(normalized.title, normalized.selftext, classification.category, persona, tone);
-            message += `Suggested Reply:\n${replyText}\n\n`;
-            stopLoader();
-          } catch (error) {
-            stopLoader();
-            logger.error.log(`Error generating reply: ${error.message}`);
-            continue;
-          }
-        }
-        
-        const postData = {
+        const bufferResult = await addToClassificationBuffer({
           postId: normalized.id,
           sourcePlatform: 'hn',
           sourceContext: 'jobs',
           title: normalized.title,
-          permalink: jobLink,
+          content: normalized.selftext || '',
           author: normalized.author,
-          selftext: normalized.selftext || '',
-          category: classification.category,
-          opportunityScore: classification.opportunityScore,
-          actionDecision: actionDecision,
-          personaUsed: persona,
-          toneUsed: tone,
-          replyMode: replyMode,
-          replyTextSent: replyText,
-          coverLetterJSON: coverLetterJSON,
-          resumeJSON: resumeJSON
-        };
+          permalink: normalized.permalink,
+          createdAt: new Date(normalized.created_utc * 1000)
+        });
         
-        await saveOpportunityPost(postData);
-        
-        stats.opportunities++;
-        
-        await sendWhatsAppMessage(message, resumePDFPath, postData);
+        if (!bufferResult.buffered) {
+          if (bufferResult.reason === 'already_processed') {
+            stats.dedupCounts.already_sent++;
+          } else if (bufferResult.reason === 'already_in_buffer') {
+            stats.dedupCounts.already_in_buffer++;
+          }
+        }
       }
     };
     
     await processBatchesSequentially(timeBuckets, processJobs);
     
+    const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
+    
+    logPlatformSummary('hackernews', runId, {
+      dateFilter: 'last 7 days',
+      collection: 'hackernews_jobs_ingestion',
+      totalFetched: stats.scraped,
+      afterKeywordFilter: stats.keywordFiltered
+    });
+    
+    const db = await connectDB();
+    const bufferSize = await db.collection('classification_buffer').countDocuments({ classified: false });
+    const queuePending = await db.collection('delivery_queue').countDocuments({ sent: false });
+    const nextQueueItem = await db.collection('delivery_queue')
+      .findOne({ sent: false }, { sort: { earliestSendAt: 1 } });
+    
+    const { batchSize, estimatedBatches } = calculateBatchSize(bufferSize, 5);
+    
+    logPipelineState({
+      ingestionComplete: true,
+      bufferSize,
+      batchSize,
+      estimatedBatches,
+      queuePending,
+      nextSend: nextQueueItem ? formatISTTime(nextQueueItem.earliestSendAt) : 'N/A'
+    });
+    
+    logPlatformComplete('hackernews', runId);
+    
     return stats;
   } catch (error) {
-    logger.error.log(`Error scraping Jobs: ${error.message}`);
+    stats.errors++;
+    logError(`Error scraping Jobs: ${error.message}`);
+    logPlatformComplete('hackernews', runId);
     return stats;
   }
 }

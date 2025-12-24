@@ -1,5 +1,7 @@
 import { connectDB } from './connection.js';
-import { logger } from '../utils/logger.js';
+import { logError } from '../logs/index.js';
+
+const COLLECTION_NAME = 'opportunities';
 
 export async function saveOpportunityPostToDatabase(postData) {
   try {
@@ -24,7 +26,6 @@ export async function saveOpportunityPostToDatabase(postData) {
       toneUsed: postData.toneUsed || null,
       replyTextSent: postData.replyTextSent || null,
       replyMode: postData.replyMode || null,
-      coverLetterJSON: postData.coverLetterJSON || null,
       resumeJSON: postData.resumeJSON || null,
       sentAt: postData.sentAt || null,
       feedbackStatus: postData.feedbackStatus || null,
@@ -38,7 +39,7 @@ export async function saveOpportunityPostToDatabase(postData) {
     if (postData.selftext) updateData.selftext = postData.selftext;
     if (postData.content) updateData.content = postData.content;
     
-    await database.collection('posts').updateOne(
+    await database.collection(COLLECTION_NAME).updateOne(
       { postId: normalizedPostId },
       {
         $set: updateData,
@@ -49,21 +50,11 @@ export async function saveOpportunityPostToDatabase(postData) {
       { upsert: true }
     );
   } catch (error) {
-    logger.error.log(`Error saving opportunity post: ${error.message}`);
+    logError(`Error saving opportunity post: ${error.message}`);
     throw error;
   }
 }
 
-export async function checkIfOpportunityPostExistsByPostId(postId) {
-  try {
-    const database = await connectDB();
-    const exists = await database.collection('posts').findOne({ postId });
-    return !!exists;
-  } catch (error) {
-    logger.error.log(`Error checking post by postId: ${error.message}`);
-    return false;
-  }
-}
 
 export async function updateOpportunityPostAfterSending(postData) {
   try {
@@ -81,13 +72,12 @@ export async function updateOpportunityPostAfterSending(postData) {
           feedbackStatus: 'pending',
           feedbackRequestedAt: null,
           actionDecision: postData.actionDecision || 'reply_only',
-          coverLetterJSON: postData.coverLetterJSON || null,
           resumeJSON: postData.resumeJSON || null
         }
       }
     );
   } catch (error) {
-    logger.error.log(`Error updating post after sending: ${error.message}`);
+    logError(`Error updating post after sending: ${error.message}`);
   }
 }
 
@@ -105,7 +95,7 @@ export async function checkIfProductHuntPostExists(postId, type = null) {
     const exists = await collection.findOne(query);
     return !!exists;
   } catch (error) {
-    logger.error.log(`Error checking Product Hunt post: ${error.message}`);
+    logError(`Error checking Product Hunt post: ${error.message}`);
     return false;
   }
 }
@@ -130,7 +120,7 @@ export async function saveProductHuntPostToDatabase(postData) {
       { upsert: true }
     );
   } catch (error) {
-    logger.error.log(`Error saving Product Hunt post: ${error.message}`);
+    logError(`Error saving Product Hunt post: ${error.message}`);
   }
 }
 
@@ -143,7 +133,7 @@ export async function checkIfProductHuntCollabExists(postId) {
     });
     return !!exists;
   } catch (error) {
-    logger.error.log(`Error checking Product Hunt collab: ${error.message}`);
+    logError(`Error checking Product Hunt collab: ${error.message}`);
     return false;
   }
 }
@@ -168,7 +158,7 @@ export async function saveProductHuntCollabToDatabase(collabData) {
       { upsert: true }
     );
   } catch (error) {
-    logger.error.log(`Error saving Product Hunt collab: ${error.message}`);
+    logError(`Error saving Product Hunt collab: ${error.message}`);
   }
 }
 
@@ -176,7 +166,7 @@ export async function saveProductHuntCollabToDatabase(collabData) {
 export async function checkPostExists(source, author, title, selftext) {
   try {
     const database = await connectDB();
-    const exists = await database.collection('posts').findOne({
+    const exists = await database.collection(COLLECTION_NAME).findOne({
       sourcePlatform: source,
       author: author,
       title: title,
@@ -184,7 +174,7 @@ export async function checkPostExists(source, author, title, selftext) {
     });
     return !!exists;
   } catch (error) {
-    logger.error.log(`Error checking post: ${error.message}`);
+    logError(`Error checking post: ${error.message}`);
     return false;
   }
 }
@@ -205,7 +195,7 @@ export async function savePost(postData) {
       updatedAt: new Date()
     };
     
-    await database.collection('posts').updateOne(
+    await database.collection(COLLECTION_NAME).updateOne(
       { postId: postData.postId },
       {
         $set: updateData,
@@ -216,14 +206,11 @@ export async function savePost(postData) {
       { upsert: true }
     );
   } catch (error) {
-    logger.error.log(`Error saving post: ${error.message}`);
+    logError(`Error saving post: ${error.message}`);
     throw error;
   }
 }
 
-// Backward compatibility exports (keeping old names for now to avoid breaking changes)
-export const saveOpportunityPost = saveOpportunityPostToDatabase;
-export const checkPostExistsByPostId = checkIfOpportunityPostExistsByPostId;
 export const updatePostAfterSending = updateOpportunityPostAfterSending;
 export const checkProductHuntPostExists = checkIfProductHuntPostExists;
 export const saveProductHuntPost = saveProductHuntPostToDatabase;

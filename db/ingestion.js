@@ -1,5 +1,5 @@
 import { connectDB } from './connection.js';
-import { logger } from '../utils/logger.js';
+import { logError } from '../logs/index.js';
 
 function normalizeContent(content) {
   return content
@@ -33,7 +33,7 @@ export async function checkIngestionExists(collectionName, postId, contentHash) 
       record: existing
     };
   } catch (error) {
-    logger.error.log(`Error checking ingestion: ${error.message}`);
+    logError(`Error checking ingestion: ${error.message}`);
     return { exists: false, record: null };
   }
 }
@@ -58,7 +58,7 @@ export async function saveIngestionRecord(collectionName, data) {
       { upsert: true }
     );
   } catch (error) {
-    logger.error.log(`Error saving ingestion record: ${error.message}`);
+    logError(`Error saving ingestion record: ${error.message}`);
   }
 }
 
@@ -72,7 +72,7 @@ export async function markIngestionClassified(collectionName, postId) {
       { $set: { aiClassified: true } }
     );
   } catch (error) {
-    logger.error.log(`Error marking ingestion as classified: ${error.message}`);
+    logError(`Error marking ingestion as classified: ${error.message}`);
   }
 }
 

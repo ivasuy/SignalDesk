@@ -1,5 +1,5 @@
 import { connectDB } from '../db/connection.js';
-import { logger } from '../utils/logger.js';
+import { logLearning, logError } from '../logs/index.js';
 
 // Database functions for learning metrics
 export async function aggregateLearningMetrics() {
@@ -53,7 +53,7 @@ export async function aggregateLearningMetrics() {
       }
     ];
     
-    const metrics = await database.collection('posts').aggregate(pipeline).toArray();
+    const metrics = await database.collection('opportunities').aggregate(pipeline).toArray();
     
     await database.collection('opportunity_learning_metrics').updateOne(
       { date: new Date().toISOString().split('T')[0] },
@@ -69,7 +69,7 @@ export async function aggregateLearningMetrics() {
     
     return metrics;
   } catch (error) {
-    logger.error.log(`Error aggregating learning metrics: ${error.message}`);
+    logError(`Error aggregating learning metrics: ${error.message}`);
     return [];
   }
 }
@@ -81,7 +81,7 @@ export async function getLearningMetrics() {
       .findOne({}, { sort: { updatedAt: -1 } });
     return latest?.metrics || [];
   } catch (error) {
-    logger.error.log(`Error getting learning metrics: ${error.message}`);
+    logError(`Error getting learning metrics: ${error.message}`);
     return [];
   }
 }
@@ -190,12 +190,12 @@ export async function shouldSkipPlatform(platform, context) {
 
 export async function runLearningCycle() {
   try {
-    logger.learning.log('Starting learning cycle...');
+    logLearning('Starting learning cycle...');
     const metrics = await aggregateLearningMetrics();
-    logger.learning.log(`Aggregated ${metrics.length} metric groups`);
+    logLearning(`Aggregated ${metrics.length} metric groups`);
     return metrics;
   } catch (error) {
-    logger.error.log(`Error in learning cycle: ${error.message}`);
+    logError(`Error in learning cycle: ${error.message}`);
     return [];
   }
 }

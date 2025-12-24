@@ -1,6 +1,7 @@
 import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
-import { logger } from '../utils/logger.js';
+import { logMongoDB, logMongoDBConnected } from '../logs/index.js';
+import { setupQueueIndexes } from '../queue/indexes.js';
 
 dotenv.config();
 
@@ -24,7 +25,7 @@ export async function connectDB() {
     
     await setupIndexes(db);
     
-    logger.mongodb.connected();
+    logMongoDBConnected();
     return db;
   } catch (error) {
     throw new Error(`MongoDB connection failed: ${error.message}`);
@@ -32,6 +33,7 @@ export async function connectDB() {
 }
 
 async function setupIndexes(db) {
+  const COLLECTION_NAME = 'opportunities';
   const problematicIndexes = [
     'subreddit_1_author_1_title_1',
     'source_1_author_1_title_1'
@@ -39,44 +41,44 @@ async function setupIndexes(db) {
   
   for (const indexName of problematicIndexes) {
     try {
-      await db.collection('posts').dropIndex(indexName);
-      logger.mongodb.log(`Dropped problematic index: ${indexName}`);
+      await db.collection(COLLECTION_NAME).dropIndex(indexName);
+      logMongoDB(`Dropped problematic index: ${indexName}`);
     } catch (error) {
     }
   }
   
   try {
-    await db.collection('posts').createIndex({ postId: 1 }, { unique: true });
+    await db.collection(COLLECTION_NAME).createIndex({ postId: 1 }, { unique: true });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ sourcePlatform: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ sourcePlatform: 1 });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ sourceContext: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ sourceContext: 1 });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ opportunityScore: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ opportunityScore: 1 });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ sentAt: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ sentAt: 1 });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ feedbackStatus: 1, sentAt: -1 });
+    await db.collection(COLLECTION_NAME).createIndex({ feedbackStatus: 1, sentAt: -1 });
   } catch (error) {
   }
   
   try {
-    await db.collection('posts').createIndex({ createdAt: 1 });
+    await db.collection(COLLECTION_NAME).createIndex({ createdAt: 1 });
   } catch (error) {
   }
   
@@ -105,6 +107,13 @@ async function setupIndexes(db) {
       await collection.createIndex({ createdAt: 1 });
     } catch (error) {
     }
+  }
+  
+  // Setup queue indexes
+  try {
+    await setupQueueIndexes();
+  } catch (error) {
+    logMongoDB(`Warning: Could not setup queue indexes: ${error.message}`);
   }
 }
 

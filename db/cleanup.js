@@ -1,5 +1,7 @@
 import { connectDB } from './connection.js';
-import { logger } from '../utils/logger.js';
+import { logMongoDB, logError } from '../logs/index.js';
+
+const COLLECTION_NAME = 'opportunities';
 
 export async function cleanupOldPosts() {
   try {
@@ -7,35 +9,29 @@ export async function cleanupOldPosts() {
     const twoWeeksAgo = new Date();
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
     
-    const redditCount = await database.collection('posts').countDocuments({
+    const redditCount = await database.collection(COLLECTION_NAME).countDocuments({
       createdAt: { $lt: twoWeeksAgo },
-      subreddit: { $exists: true }
+      sourcePlatform: 'reddit'
     });
     
-    const hackernewsHiringCount = await database.collection('posts').countDocuments({
+    const hackernewsHiringCount = await database.collection(COLLECTION_NAME).countDocuments({
       createdAt: { $lt: twoWeeksAgo },
-      source: 'hackernews-ask-hiring'
+      sourcePlatform: 'hn',
+      sourceContext: 'ask-hiring'
     });
     
-    const hackernewsJobsCount = await database.collection('posts').countDocuments({
+    const hackernewsJobsCount = await database.collection(COLLECTION_NAME).countDocuments({
       createdAt: { $lt: twoWeeksAgo },
-      source: 'hackernews-jobs'
+      sourcePlatform: 'hn',
+      sourceContext: 'jobs'
     });
     
-    const wellfoundCount = await database.collection('posts').countDocuments({
+    const githubCount = await database.collection(COLLECTION_NAME).countDocuments({
       createdAt: { $lt: twoWeeksAgo },
-      source: 'wellfound'
+      sourcePlatform: 'github'
     });
-    
-    const producthuntPostsCount = await database.collection('producthunt_posts').countDocuments({
-      createdAt: { $lt: twoWeeksAgo }
-    });
-    
-    const producthuntCollabCount = await database.collection('producthunt_collab_opportunities').countDocuments({
-      createdAt: { $lt: twoWeeksAgo }
-    });
-    
-    const result = await database.collection('posts').deleteMany({
+
+    const result = await database.collection(COLLECTION_NAME).deleteMany({
       createdAt: { $lt: twoWeeksAgo }
     });
     
@@ -47,11 +43,11 @@ export async function cleanupOldPosts() {
       createdAt: { $lt: twoWeeksAgo }
     });
     
-    logger.mongodb.log(`Cleaned up ${result.deletedCount} old posts (Reddit: ${redditCount}, HN Hiring: ${hackernewsHiringCount}, HN Jobs: ${hackernewsJobsCount}, Wellfound: ${wellfoundCount})`);
-    logger.mongodb.log(`Cleaned up ${producthuntPostsResult.deletedCount} Product Hunt posts and ${producthuntCollabResult.deletedCount} collab opportunities`);
+    logMongoDB(`Cleaned up ${result.deletedCount} old posts (Reddit: ${redditCount}, HN Hiring: ${hackernewsHiringCount}, HN Jobs: ${hackernewsJobsCount}, GitHub: ${githubCount})`);
+    logMongoDB(`Cleaned up ${producthuntPostsResult.deletedCount} Product Hunt posts and ${producthuntCollabResult.deletedCount} collab opportunities`);
     return result.deletedCount + producthuntPostsResult.deletedCount + producthuntCollabResult.deletedCount;
   } catch (error) {
-    logger.error.log(`Error cleaning up old posts: ${error.message}`);
+    logError(`Error cleaning up old posts: ${error.message}`);
     return 0;
   }
 }

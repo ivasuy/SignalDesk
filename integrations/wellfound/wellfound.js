@@ -2,7 +2,7 @@ import { checkPostExists, savePost } from '../../db/posts.js';
 import { classifyOpportunity, evaluateHighValue, generateCoverLetterAndResume } from '../../ai/ai.js';
 import { startLoader, stopLoader } from '../../utils/loader.js';
 import { sendWhatsAppMessage } from '../whatsapp/whatsapp.js';
-import { logger } from '../../utils/logger.js';
+import { logInfo, logError, logWarn } from '../../logs/index.js';
 import { cleanHTML } from '../../utils/html-cleaner.js';
 
 const GRAPHQL_ENDPOINT = 'https://wellfound.com/graphql';
@@ -107,7 +107,7 @@ async function fetchWellfoundJobs(role) {
     
     return jobListings;
   } catch (error) {
-    logger.wellfound.log(`Error fetching jobs for role ${role}: ${error.message}`);
+    logError(`Error fetching jobs for role ${role}: ${error.message}`);
     return [];
   }
 }
@@ -161,7 +161,7 @@ export async function scrapeWellfound() {
   let emptyResponseCount = 0;
   
   try {
-    logger.wellfound.scrapingStart();
+    logInfo('Wellfound scraping started');
     
     const allJobs = [];
     const seenUrls = new Set();
@@ -169,16 +169,16 @@ export async function scrapeWellfound() {
     const oneWeekAgo = now - (7 * 24 * 60 * 60);
     
     for (const role of ROLES) {
-      logger.wellfound.log(`Fetching jobs for role: ${role}`);
+      // Fetching jobs for role
       
       const jobs = await fetchWellfoundJobs(role);
       
       if (jobs.length === 0) {
         emptyResponseCount++;
-        logger.wellfound.log(`No jobs found for role ${role} (empty count: ${emptyResponseCount})`);
+        // No jobs found for role
         
         if (emptyResponseCount >= 2) {
-          logger.error.warning('Empty highlightedJobListings detected twice in a row. Aborting scraping.');
+          logWarn('Empty highlightedJobListings detected twice in a row. Aborting scraping.');
           break;
         }
         continue;
@@ -201,21 +201,20 @@ export async function scrapeWellfound() {
         allJobs.push(normalized);
       }
       
-      logger.wellfound.log(`Found ${jobs.length} jobs for role ${role}`);
+      // Found jobs for role
     }
     
     stats.scraped = allJobs.length;
-    logger.wellfound.log(`Found ${allJobs.length} unique jobs from last 7 days`);
+    logInfo(`Found ${allJobs.length} unique jobs from last 7 days`);
     
     if (allJobs.length === 0) {
-      logger.wellfound.log('No jobs found. Exiting.');
-      logger.wellfound.scrapingComplete();
+      logInfo('No jobs found. Exiting.');
       return stats;
     }
     
     const { jobs24h, jobs1day, jobsWeek } = bucketByFreshness(allJobs);
     
-    logger.wellfound.log(`Prioritizing: ${jobs24h.length} (last 24h) → ${jobs1day.length} (1-2 days) → ${jobsWeek.length} (2-7 days)`);
+    // Prioritizing jobs by freshness
     
     const processJobs = async (jobBatch, batchName) => {
       for (const job of jobBatch) {
@@ -249,7 +248,7 @@ export async function scrapeWellfound() {
           stopLoader();
         } catch (error) {
           stopLoader();
-          logger.error.log(`Error classifying opportunity: ${error.message}`);
+          logError(`Error classifying opportunity: ${error.message}`);
           continue;
         }
         
@@ -274,7 +273,7 @@ export async function scrapeWellfound() {
             stopLoader();
           } catch (error) {
             stopLoader();
-            logger.error.log(`Error evaluating high-value: ${error.message}`);
+            logError(`Error evaluating high-value: ${error.message}`);
             continue;
           }
           
@@ -310,7 +309,7 @@ export async function scrapeWellfound() {
               stopLoader();
             } catch (error) {
               stopLoader();
-              logger.error.log(`Error generating cover letter/resume: ${error.message}`);
+              logError(`Error generating cover letter/resume: ${error.message}`);
               continue;
             }
           }
@@ -329,19 +328,11 @@ export async function scrapeWellfound() {
     await processJobs(jobs1day, '1day');
     await processJobs(jobsWeek, 'week');
     
-    logger.wellfound.summary();
-    logger.stats.wellfound(
-      stats.scraped,
-      stats.titleFiltered,
-      stats.aiClassified,
-      stats.opportunities,
-      stats.highValue
-    );
-    logger.wellfound.scrapingComplete();
+    // Wellfound scraping complete
     
     return stats;
   } catch (error) {
-    logger.error.log(`Error scraping Wellfound: ${error.message}`);
+    logError(`Error scraping Wellfound: ${error.message}`);
     return stats;
   }
 }

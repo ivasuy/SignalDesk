@@ -19,7 +19,6 @@ CRITICAL: REJECT posts that are:
 ONLY ACCEPT posts that are:
 - Actively seeking developers/freelancers/contractors (someone wants to HIRE)
 - Developers/engineers looking for TECH PARTNERS/cofounders (another developer to build together) - ACCEPT these
-- Non-tech people (sales, marketing, business) looking for developers - REJECT these (they want to hire, not partner)
 - Offering paid work TO developers (must mention payment/budget/compensation)
 - Seeking collaboration on NEW ventures (not existing products) - ONLY if from tech people
 - Product ideas seeking technical cofounder/developer - ONLY if from another developer
@@ -29,7 +28,6 @@ CATEGORIES:
 1. HIRING - Actively hiring developers (must mention payment/budget)
 2. FREELANCE - Seeking freelancers for paid project work
 3. COLLABORATION - Seeking technical partner/cofounder for NEW project/startup
-4. IDEAS - Product idea seeking technical cofounder/developer to BUILD it
 
 STRICT RULES:
 - Must be SEEKING TO HIRE someone (developer, freelancer, partner, cofounder) OR be a developer seeking another developer partner
@@ -49,7 +47,7 @@ STRICT RULES:
 Return format: JSON only:
 {
   "valid": boolean,
-  "category": "job" | "freelance" | "collab" | "build" | null,
+  "category": "job" | "freelance" | "collab",
   "opportunityScore": number (0-100),
   "reasoning": "brief explanation"
 }

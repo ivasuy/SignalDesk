@@ -35,6 +35,33 @@ export function matchesSkillFilter(title, body, skills = []) {
   return skillKeywords.some(keyword => text.includes(keyword));
 }
 
+export function matchesProductHuntCollabFilter(name, tagline, description) {
+  const text = `${name} ${tagline || ''} ${description || ''}`.toLowerCase();
+  const collabKeywords = ['collab', 'open source', 'contributors', 'hiring', 'early stage', 'looking for dev', 'looking for engineer'];
+  return collabKeywords.some(keyword => text.includes(keyword));
+}
+
+export function shouldExcludeProductHunt(description) {
+  if (!description) return false;
+  const text = description.toLowerCase();
+  const excludePatterns = ['launched', 'v1 complete', 'fully built', 'scaling'];
+  return excludePatterns.some(pattern => text.includes(pattern));
+}
+
+export function matchesHackerNewsPaidRoleFilter(title, content) {
+  const text = `${title} ${content || ''}`.toLowerCase();
+  const paidKeywords = ['contract', 'freelance', 'part-time', 'remote', 'paid', 'looking for developer', 'looking for engineer'];
+  return paidKeywords.some(keyword => text.includes(keyword));
+}
+
+export function shouldExcludeHackerNews(content) {
+  if (!content) return false;
+  const text = content.toLowerCase();
+  const excludePatterns = ['email us', 'contact us'];
+  const hasTechRole = ['developer', 'engineer', 'programmer', 'software', 'backend', 'frontend'].some(term => text.includes(term));
+  return excludePatterns.some(pattern => text.includes(pattern)) && !hasTechRole;
+}
+
 export function matchesHiringTitle(title) {
   if (!title) return false;
   
@@ -100,7 +127,7 @@ export function filterByTimeBuckets(items, timeField = 'time') {
 /**
  * Process batches with early stopping logic (for GitHub)
  */
-export async function processBatchesWithEarlyStop(buckets, processFn, logger) {
+export async function processBatchesWithEarlyStop(buckets, processFn, logger = { log: () => {} }) {
   let processed24h = await processFn(buckets.last24h, 'last24h');
   logger.log(`Processed 24h bucket: ${processed24h} opportunities`);
   
@@ -129,10 +156,10 @@ export async function processBatchesSequentially(buckets, processFn) {
 }
 
 /**
- * Build GitHub search queries for a given date string
+ * Build GitHub search queries for a given date string with skill keywords
  */
-export function buildGitHubSearchQueries(dateStr) {
-  return [
+export function buildGitHubSearchQueries(dateStr, skills = []) {
+  const baseQueries = [
     `is:issue is:open label:"help wanted" created:>=${dateStr}`,
     `is:issue is:open label:"good first issue" created:>=${dateStr}`,
     `is:issue is:open label:"contract" created:>=${dateStr}`,
@@ -140,5 +167,58 @@ export function buildGitHubSearchQueries(dateStr) {
     `is:issue is:open "need help" created:>=${dateStr}`,
     `is:issue is:open "seeking developer" created:>=${dateStr}`
   ];
+  
+  if (skills.length === 0) {
+    return baseQueries;
+  }
+  
+  const skillQueries = [];
+  const topSkills = skills.slice(0, 10);
+  
+  for (const baseQuery of baseQueries) {
+    for (const skill of topSkills) {
+      skillQueries.push(`${baseQuery} "${skill}"`);
+    }
+  }
+  
+  return skillQueries;
+}
+
+/**
+ * Calculate batch size and estimated batches for classification buffer
+ * Ensures estimatedBatches never exceeds MAX_BATCHES
+ * 
+ * @param {number} remaining - Number of items in classification buffer
+ * @param {number} maxBatches - Maximum number of batches allowed (default: 5)
+ * @returns {Object} { batchSize, estimatedBatches }
+ */
+export function calculateBatchSize(remaining, maxBatches = 5) {
+  if (remaining === 0) {
+    return { batchSize: 0, estimatedBatches: 0 };
+  }
+  
+  // If remaining <= maxBatches, use remaining as batchSize (results in 1 batch)
+  if (remaining <= maxBatches) {
+    return { batchSize: remaining, estimatedBatches: 1 };
+  }
+  
+  // Calculate batch size to ensure max batches is never exceeded
+  // batchSize = ceil(remaining / maxBatches)
+  // But ensure batchSize >= 5 when remaining >= 5
+  let batchSize = Math.ceil(remaining / maxBatches);
+  if (remaining >= 5 && batchSize < 5) {
+    batchSize = 5;
+  }
+  
+  // Ensure batchSize doesn't exceed remaining
+  batchSize = Math.min(batchSize, remaining);
+  
+  // Calculate estimated batches
+  const estimatedBatches = Math.ceil(remaining / batchSize);
+  
+  // Ensure estimatedBatches never exceeds maxBatches
+  const finalEstimatedBatches = Math.min(estimatedBatches, maxBatches);
+  
+  return { batchSize, estimatedBatches: finalEstimatedBatches };
 }
 

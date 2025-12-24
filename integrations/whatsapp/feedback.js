@@ -1,5 +1,7 @@
 import { connectDB } from '../../db/connection.js';
-import { logger } from '../../utils/logger.js';
+
+const COLLECTION_NAME = 'opportunities';
+import { logWhatsApp, logError, logInfo } from '../../logs/index.js';
 
 const FEEDBACK_OPTIONS = {
   'A': 'no_response',
@@ -29,13 +31,13 @@ export async function sendDailyFeedbackForm(client, formatPhoneNumber) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const pendingOpportunities = await db.collection('posts').find({
+    const pendingOpportunities = await db.collection(COLLECTION_NAME).find({
       feedbackStatus: 'pending',
       sentAt: { $gte: today }
     }).sort({ sentAt: 1 }).toArray();
     
     if (pendingOpportunities.length === 0) {
-      logger.whatsapp.log('No pending opportunities for feedback today');
+      logWhatsApp('No pending opportunities for feedback today');
       return;
     }
     
@@ -47,6 +49,8 @@ export async function sendDailyFeedbackForm(client, formatPhoneNumber) {
       const platform = opp.sourcePlatform || 'unknown';
       const title = opp.title || 'Untitled';
       const link = opp.permalink || 'No link';
+      
+      logInfo(`Feedback prompt: postId=${opp.postId} platform=${platform} toneUsed=${opp.toneUsed || 'N/A'} personaUsed=${opp.personaUsed || 'N/A'} expected_options=[A,B,C,D,E]`);
       
       message += `${num}. ${title}\n`;
       message += `   Platform: ${platform}\n`;
@@ -69,10 +73,10 @@ export async function sendDailyFeedbackForm(client, formatPhoneNumber) {
     
     try {
       await client.sendMessage(chatId, message);
-      logger.whatsapp.log(`Sent daily feedback form for ${pendingOpportunities.length} opportunities`);
+      logWhatsApp(`Sent daily feedback form for ${pendingOpportunities.length} opportunities`);
       
       const postIds = pendingOpportunities.map(opp => opp.postId);
-      await db.collection('posts').updateMany(
+      await db.collection(COLLECTION_NAME).updateMany(
         { postId: { $in: postIds } },
         { $set: { feedbackRequestedAt: new Date() } }
       );
@@ -81,10 +85,10 @@ export async function sendDailyFeedbackForm(client, formatPhoneNumber) {
         const numberOnly = receiverNumber.replace(/[^\d]/g, '');
         const alternativeChatId = `${numberOnly}@s.whatsapp.net`;
         await client.sendMessage(alternativeChatId, message);
-        logger.whatsapp.log('Feedback form sent (alternative format)');
+        logWhatsApp('Feedback form sent (alternative format)');
         
         const postIds = pendingOpportunities.map(opp => opp.postId);
-        await db.collection('posts').updateMany(
+        await db.collection(COLLECTION_NAME).updateMany(
           { postId: { $in: postIds } },
           { $set: { feedbackRequestedAt: new Date() } }
         );
@@ -131,7 +135,7 @@ export function setupFeedbackHandler(client, formatPhoneNumber) {
       
       await processFeedback(feedbackLetter, opportunityNum);
     } catch (error) {
-      logger.error.log(`Error processing feedback: ${error.message}`);
+      logError(`Error processing feedback: ${error.message}`);
     }
   });
 }
@@ -159,26 +163,26 @@ async function processFeedback(feedbackLetter, opportunityNum) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      const pendingOpportunities = await db.collection('posts').find({
+      const pendingOpportunities = await db.collection(COLLECTION_NAME).find({
         feedbackStatus: 'pending',
         sentAt: { $gte: today }
       }).sort({ sentAt: 1 }).toArray();
       
       if (opportunityNum < 1 || opportunityNum > pendingOpportunities.length) {
-        logger.whatsapp.log(`Invalid opportunity number: ${opportunityNum}`);
+        logWhatsApp(`Invalid opportunity number: ${opportunityNum}`);
         return;
       }
       
       targetPost = pendingOpportunities[opportunityNum - 1];
     } else {
-      targetPost = await db.collection('posts').findOne(
+      targetPost = await db.collection(COLLECTION_NAME).findOne(
         { feedbackStatus: 'pending' },
         { sort: { sentAt: -1 } }
       );
     }
     
     if (!targetPost) {
-      logger.whatsapp.log('No pending feedback found');
+      logWhatsApp('No pending feedback found');
       return;
     }
     
@@ -191,7 +195,7 @@ async function processFeedback(feedbackLetter, opportunityNum) {
     const sentAt = targetPost.sentAt || targetPost.createdAt;
     const responseDelayHours = sentAt ? ((now - new Date(sentAt)) / (1000 * 60 * 60)) : null;
     
-    await db.collection('posts').updateOne(
+    await db.collection(COLLECTION_NAME).updateOne(
       { _id: targetPost._id },
       {
         $set: {
@@ -202,9 +206,9 @@ async function processFeedback(feedbackLetter, opportunityNum) {
       }
     );
     
-    logger.whatsapp.log(`Feedback received for ${targetPost.postId}: ${feedbackLetter} → ${finalFeedback}`);
+    logInfo(`Feedback received: postId=${targetPost.postId} platform=${targetPost.sourcePlatform} feedback_value=${finalFeedback} responseDelayHours=${responseDelayHours ? Math.round(responseDelayHours * 10) / 10 : 'N/A'}`);
   } catch (error) {
-    logger.error.log(`Error processing feedback: ${error.message}`);
+    logError(`Error processing feedback: ${error.message}`);
   }
 }
 

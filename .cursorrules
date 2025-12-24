@@ -133,7 +133,7 @@ export const GITHUB_KEYWORDS = [
 # =====================================================
 
 Each platform MUST:
-- Live in its own directory
+- Live in its own directory under /integrations
 - Have its own scraper + parser
 - Output a NORMALIZED structure:
   {
@@ -157,6 +157,21 @@ Platforms ONLY:
 - Parse
 - Normalize
 - Save raw data
+
+# =====================================================
+# 5.1 FUTURE PLATFORM EXTENSIBILITY (NEW)
+# =====================================================
+
+When adding a new platform in the future:
+
+- Create a NEW directory under /integrations/<platform_name>
+- ALL platform-specific business logic MUST live inside that directory
+- Core logic (classification, scoring, queuing, feedback) MUST NOT be duplicated
+- Platforms must only plug into the existing pipeline via normalized output
+
+Rule:
+If logic is reusable across platforms → it belongs in core modules, NOT the platform folder.
+If logic is specific to one platform → it belongs ONLY inside that platform’s integration directory.
 
 # =====================================================
 # 6. AI USAGE RULES
@@ -216,11 +231,22 @@ Never overwrite it.
 - Early returns
 - Explicit error handling
 
-Cursor MUST:
-- Refactor oversized files
-- Extract helpers
-- Reduce duplication
-- Keep logic boring and obvious
+# =====================================================
+# 9.1 COMMENTING RULES (NEW)
+# =====================================================
+
+Comments MUST be:
+- Minimal
+- Intentional
+- Added ONLY when the logic is non-obvious or safety-critical
+
+Do NOT:
+- Comment obvious code
+- Explain what the code is doing line-by-line
+- Use comments as a substitute for clear naming
+
+Rule:
+If the code is clean and well-named, comments are unnecessary.
 
 # =====================================================
 # 10. PHILOSOPHY

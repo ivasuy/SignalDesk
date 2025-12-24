@@ -1,13 +1,12 @@
 import { scrapeAskHiring } from './hiring.js';
 import { scrapeJobs } from './jobs.js';
-import { logger } from '../../utils/logger.js';
+import { logError } from '../../logs/index.js';
 
 export async function scrapeHackerNews() {
-  logger.hackernews.scrapingStart();
-  
   const stats = {
     askHiring: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 },
-    jobs: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 }
+    jobs: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 },
+    errors: 0
   };
   
   try {
@@ -19,28 +18,10 @@ export async function scrapeHackerNews() {
     stats.askHiring = askHiringStats;
     stats.jobs = jobsStats;
     
-    logger.hackernews.summary();
-    logger.stats.hackernews(
-      'Ask Hiring',
-      askHiringStats.scraped,
-      askHiringStats.keywordFiltered,
-      askHiringStats.aiClassified,
-      askHiringStats.opportunities,
-      askHiringStats.highValue
-    );
-    logger.stats.hackernews(
-      'Jobs',
-      jobsStats.scraped,
-      jobsStats.keywordFiltered,
-      jobsStats.aiClassified,
-      jobsStats.opportunities,
-      jobsStats.highValue
-    );
-    logger.hackernews.scrapingComplete();
-    
-    return stats;
+    return stats; 
   } catch (error) {
-    logger.error.log(`Hacker News error: ${error.message}`);
+    stats.errors++;
+    logError(`Hacker News error: ${error.message}`);
     return stats;
   }
 }
