@@ -1,11 +1,6 @@
 import { searchIssues } from './api.js';
-import { 
-  checkIngestionExists,
-  saveIngestionRecord,
-  generateContentHash
-} from '../../db/ingestion.js';
-import { buildGitHubSearchQueries } from '../../utils/utils.js';
-import { matchesSkillFilter, bucketByRecency, processBatchesWithEarlyStop } from '../../utils/utils.js';
+import { buildGitHubSearchQueries } from '../../filters/github.js';
+import { bucketByRecency, processBatchesWithEarlyStop } from '../../utils/utils.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   generateRunId, 
@@ -21,55 +16,10 @@ import {
 } from '../../logs/index.js';
 import { calculateBatchSize } from '../../utils/utils.js';
 import { connectDB } from '../../db/connection.js';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { markPlatformIngestionComplete, getDailyDeliveryState } from '../../db/state.js';
+import { loadResumeSkills, groupIssuesByRepo, selectBestIssuePerRepo, processGitHubIssue } from './helpers.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
-function loadResumeSkills() {
-  try {
-    const resumePath = join(__dirname, '..', '..', 'resume.json');
-    const resumeData = JSON.parse(readFileSync(resumePath, 'utf8'));
-    
-    const skills = [];
-    
-    if (resumeData.skills?.languages) {
-      skills.push(...resumeData.skills.languages.map(s => s.toLowerCase()));
-    }
-    
-    if (resumeData.skills?.frameworks_and_libraries) {
-      skills.push(...resumeData.skills.frameworks_and_libraries.map(s => s.toLowerCase()));
-    }
-    
-    if (resumeData.skills?.databases) {
-      skills.push(...resumeData.skills.databases.map(s => s.toLowerCase()));
-    }
-    
-    if (resumeData.skills?.other) {
-      skills.push(...resumeData.skills.other.map(s => s.toLowerCase()));
-    }
-    
-    return [...new Set(skills)];
-  } catch (error) {
-    throw new Error(`Failed to load resume.json: ${error.message}`);
-  }
-}
-
-function normalizeIssue(issue) {
-  const repoFullName = issue.repository_url ? issue.repository_url.split('/repos/')[1] : 'unknown';
-  return {
-    id: `github-${issue.id}`,
-    title: issue.title,
-    selftext: issue.body || '',
-    permalink: issue.html_url,
-    created_utc: Math.floor(new Date(issue.created_at).getTime() / 1000),
-    author: issue.user?.login || 'unknown',
-    source: 'github',
-    repoFullName: repoFullName
-  };
-}
 
 
 export async function scrapeGitHub() {
@@ -141,24 +91,8 @@ export async function scrapeGitHub() {
     
     logInfo(`Found ${allIssues.length} unique issues before filtering`, { runId });
     
-    const repoGroups = {};
-    for (const issue of allIssues) {
-      const repoFullName = issue.repository_url ? issue.repository_url.split('/repos/')[1] : 'unknown';
-      if (!repoGroups[repoFullName]) {
-        repoGroups[repoFullName] = [];
-      }
-      repoGroups[repoFullName].push(issue);
-    }
-    
-    const bestIssuesPerRepo = [];
-    for (const [repo, issues] of Object.entries(repoGroups)) {
-      issues.sort((a, b) => {
-        const dateA = new Date(a.created_at);
-        const dateB = new Date(b.created_at);
-        return dateB - dateA;
-      });
-      bestIssuesPerRepo.push(issues[0]);
-    }
+    const repoGroups = groupIssuesByRepo(allIssues);
+    const bestIssuesPerRepo = selectBestIssuePerRepo(repoGroups);
     
     stats.scraped = bestIssuesPerRepo.length;
     logInfo(`Selected ${stats.scraped} best issues (1 per repo) from ${Object.keys(repoGroups).length} repos`, { runId });
@@ -171,55 +105,29 @@ export async function scrapeGitHub() {
       let validOpportunities = 0;
       
       for (const issue of issues) {
-        const normalized = normalizeIssue(issue);
+        const result = await processGitHubIssue(issue, skills);
         
-        const contentHash = generateContentHash(normalized.title, normalized.selftext);
-        
-        const ingestionCheck = await checkIngestionExists('github_ingestion', normalized.id, contentHash);
-        if (ingestionCheck.exists) {
-          stats.dedupCounts.already_classified++;
-          continue;
-        }
-        
-        const titleMatch = matchesSkillFilter(normalized.title, normalized.selftext, skills.length > 0 ? skills : []);
-        if (!titleMatch) {
-          stats.skillFiltered++;
-          await saveIngestionRecord('github_ingestion', {
-            postId: normalized.id,
-            contentHash,
-            keywordMatched: false,
-            metadata: {
-              repoFullName: normalized.repoFullName,
-              author: normalized.author,
-              title: normalized.title
-            }
-          });
-          continue;
-        }
-        
-        await saveIngestionRecord('github_ingestion', {
-          postId: normalized.id,
-          contentHash,
-          keywordMatched: true,
-          metadata: {
-            repoFullName: normalized.repoFullName,
-            author: normalized.author,
-            title: normalized.title
+        if (!result.shouldProcess) {
+          if (result.reason === 'non_tech_issue' || result.reason === 'skill_filter') {
+            stats.skillFiltered++;
+          } else if (result.reason === 'already_classified') {
+            stats.dedupCounts.already_classified++;
           }
-        });
+          continue;
+        }
         
-        const repoCount = stats.reposDetected.get(normalized.repoFullName) || 0;
-        stats.reposDetected.set(normalized.repoFullName, repoCount + 1);
+        const repoCount = stats.reposDetected.get(result.normalized.repoFullName) || 0;
+        stats.reposDetected.set(result.normalized.repoFullName, repoCount + 1);
         
         const bufferResult = await addToClassificationBuffer({
-          postId: normalized.id,
+          postId: result.normalized.id,
           sourcePlatform: 'github',
-          sourceContext: normalized.repoFullName,
-          title: normalized.title,
-          content: normalized.selftext || '',
-          author: normalized.author,
-          permalink: normalized.permalink,
-          createdAt: new Date(normalized.created_utc * 1000)
+          sourceContext: result.normalized.repoFullName,
+          title: result.normalized.title,
+          content: result.normalized.selftext || '',
+          author: result.normalized.author,
+          permalink: result.normalized.permalink,
+          createdAt: new Date(result.normalized.created_utc * 1000)
         });
         
         if (!bufferResult.buffered) {
@@ -267,6 +175,18 @@ export async function scrapeGitHub() {
     });
     
     logPlatformComplete('github', runId);
+    
+    const allIngestionDone = await markPlatformIngestionComplete('github');
+    if (allIngestionDone) {
+      const dailyState = await getDailyDeliveryState();
+      const bufferSizeAfter = await db.collection('classification_buffer').countDocuments({ classified: false });
+      
+      if (bufferSizeAfter === 0) {
+        logInfo('Ingestion complete. No items eligible for classification today.');
+      } else {
+        logInfo(`Ingestion complete. Waiting for classification to finish... (${bufferSizeAfter} items in buffer)`);
+      }
+    }
     
     return stats;
   } catch (error) {

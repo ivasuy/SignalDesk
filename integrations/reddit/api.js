@@ -56,3 +56,20 @@ export async function redditRequest(endpoint, options = {}) {
   return response.json();
 }
 
+export async function fetchNewPosts(subreddit) {
+  const data = await redditRequest(`/r/${subreddit}/new.json?limit=25`);
+  const now = Date.now() / 1000;
+  const fiveHoursAgo = now - (5 * 60 * 60);
+  
+  return data.data.children
+    .map(child => ({
+      id: child.data.id,
+      title: child.data.title,
+      selftext: child.data.selftext,
+      permalink: child.data.permalink,
+      created_utc: child.data.created_utc,
+      author: child.data.author
+    }))
+    .filter(post => post.created_utc >= fiveHoursAgo);
+}
+

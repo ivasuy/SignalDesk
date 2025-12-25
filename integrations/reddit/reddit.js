@@ -1,11 +1,6 @@
-import { redditRequest } from './api.js';
-import { SUBREDDITS } from '../../utils/config.js';
-import { 
-  checkIngestionExists,
-  saveIngestionRecord,
-  generateContentHash
-} from '../../db/ingestion.js';
-import { isForHirePost, matchesKeywords } from '../../utils/utils.js';
+import { fetchNewPosts } from './api.js';
+import { SUBREDDITS } from '../../utils/constants.js';
+import { processRedditPost } from './helpers.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   generateRunId, 
@@ -16,27 +11,12 @@ import {
   stopPlatformFetching,
   logError,
   logPipelineState,
-  formatISTTime
+  formatISTTime,
+  logInfo
 } from '../../logs/index.js';
 import { calculateBatchSize } from '../../utils/utils.js';
 import { connectDB } from '../../db/connection.js';
-
-export async function fetchNewPosts(subreddit) {
-  const data = await redditRequest(`/r/${subreddit}/new.json?limit=25`);
-  const now = Date.now() / 1000;
-  const fiveHoursAgo = now - (5 * 60 * 60);
-  
-  return data.data.children
-    .map(child => ({
-      id: child.data.id,
-      title: child.data.title,
-      selftext: child.data.selftext,
-      permalink: child.data.permalink,
-      created_utc: child.data.created_utc,
-      author: child.data.author
-    }))
-    .filter(post => post.created_utc >= fiveHoursAgo);
-}
+import { markPlatformIngestionComplete, getDailyDeliveryState } from '../../db/state.js';
 
 export async function scrapeReddit() {
   const runId = generateRunId('reddit');
@@ -81,70 +61,20 @@ export async function scrapeReddit() {
         let keywordFiltered = 0;
         
         for (const post of posts) {
-          const normalizedPostId = `reddit-${post.id}`;
-          const contentHash = generateContentHash(post.title, post.selftext || '');
-          const ingestionCheck = await checkIngestionExists('reddit_ingestion', normalizedPostId, contentHash);
-          if (ingestionCheck.exists) {
-            stats.dedupCounts.already_classified++;
-            continue;
-          }
+          const result = await processRedditPost(post, subreddit);
           
-          if (isForHirePost(post.title) || (post.selftext && isForHirePost(post.selftext))) {
-            await saveIngestionRecord('reddit_ingestion', {
-              postId: normalizedPostId,
-              contentHash,
-              keywordMatched: false,
-              metadata: {
-                subreddit,
-                author: post.author || 'unknown',
-                title: post.title
-              }
-            });
-            continue;
-          }
-          
-          const titleMatch = matchesKeywords(post.title);
-          const bodyMatch = post.selftext ? matchesKeywords(post.selftext) : false;
-          
-          if (!titleMatch && !bodyMatch) {
-            await saveIngestionRecord('reddit_ingestion', {
-              postId: normalizedPostId,
-              contentHash,
-              keywordMatched: false,
-              metadata: {
-                subreddit,
-                author: post.author || 'unknown',
-                title: post.title
-              }
-            });
-            continue;
-          }
-
-          await saveIngestionRecord('reddit_ingestion', {
-            postId: normalizedPostId,
-            contentHash,
-            keywordMatched: true,
-            metadata: {
-              subreddit,
-              author: post.author || 'unknown',
-              title: post.title
+          if (!result.shouldProcess) {
+            if (result.reason === 'already_classified') {
+              stats.dedupCounts.already_classified++;
             }
-          });
+            continue;
+          }
           
           keywordFiltered++;
           stats.subreddits[subreddit].keywordFiltered++;
           stats.total.keywordFiltered++;
           
-          const bufferResult = await addToClassificationBuffer({
-            postId: normalizedPostId,
-            sourcePlatform: 'reddit',
-            sourceContext: subreddit,
-            title: post.title,
-            content: post.selftext || '',
-            author: post.author || 'unknown',
-            permalink: `https://reddit.com${post.permalink}`,
-            createdAt: new Date(post.created_utc * 1000)
-          });
+          const bufferResult = await addToClassificationBuffer(result.normalized);
           
           if (!bufferResult.buffered) {
             if (bufferResult.reason === 'already_processed') {
@@ -190,6 +120,18 @@ export async function scrapeReddit() {
     });
     
     logPlatformComplete('reddit', runId);
+    
+    const allIngestionDone = await markPlatformIngestionComplete('reddit');
+    if (allIngestionDone) {
+      const dailyState = await getDailyDeliveryState();
+      const bufferSizeAfter = await db.collection('classification_buffer').countDocuments({ classified: false });
+      
+      if (bufferSizeAfter === 0) {
+        logInfo('Ingestion complete. No items eligible for classification today.');
+      } else {
+        logInfo(`Ingestion complete. Waiting for classification to finish... (${bufferSizeAfter} items in buffer)`);
+      }
+    }
     
     return stats;
   } catch (error) {

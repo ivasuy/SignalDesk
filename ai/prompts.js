@@ -1,109 +1,4 @@
-export const CLASSIFICATION_PROMPT = `CRITICAL: RETURN JSON ONLY. NO explanations. NO markdown. NO text before/after JSON. ANY extra text makes the response INVALID.
 
-You MUST return ONLY this exact JSON structure:
-{
-  "valid": boolean,
-  "category": "job" | "freelance" | "collab",
-  "opportunityScore": number,
-  "reasoning": "one short sentence"
-}
-
-Analyze the following opportunity and determine if it is a REAL, ACTIONABLE opportunity for the candidate.
-
-CANDIDATE RESUME (GROUND TRUTH):
-{resume}
-
-SOURCE PLATFORM:
-{platform}
-
-SOURCE CONTEXT:
-{context}
-
-------------------------------------------------
-IMMEDIATE REJECTION (REJECT IF ANY TRUE):
-------------------------------------------------
-- Offering services ("for hire", "available", "my services")
-- Showcases, feedback requests, discussions, idea validation only
-- Completed product announcements
-- Non-technical founders seeking developers as employees
-- Requires skills NOT in resume (Python, PHP, Ruby, Go, Rust, .NET, etc.)
-- Senior/staff-level roles beyond junior–mid
-- Generic "looking for dev" without scope or intent
-- Compliance, legal, licensing, policy-only tasks
-- Non-engineering roles (PM-only, QA-only, marketing-only, sales-only)
-- Issues without coding, architecture, or implementation work
-
-------------------------------------------------
-PLATFORM-SPECIFIC ACCEPTANCE RULES:
-------------------------------------------------
-
-REDDIT / HACKERNEWS:
-Accept ONLY if:
-- Seeking developer / freelancer / tech cofounder
-- Mentions building something new OR paid work
-- Author intent is clear and serious
-
-GITHUB:
-Accept ONLY if:
-- Issue/discussion implies real implementation work
-- Mentions backend, frontend, infra, scraper, API, system work
-- Strong overlap with resume skills
-- Coding-heavy, architecture, or implementation work required
-Reject if:
-- Docs-only
-- Refactor-only
-- Maintenance-only
-- Review-only
-- Documentation-only
-- Governance-only
-- Compliance-only
-- Non-coding tasks
-HARD RULE: If GitHub AND not coding-heavy → valid=false
-
-PRODUCT HUNT:
-Accept ONLY if:
-- Very early-stage (MVP / beta / just launched)
-- Seeking technical collaborator or builder
-- Product domain matches resume (SaaS, backend, infra, AI tooling)
-Reject if:
-- Mature SaaS hiring
-- Marketing-only roles
-- No collaboration intent
-
-------------------------------------------------
-CATEGORIES:
-------------------------------------------------
-- job
-- freelance
-- collab
-
-------------------------------------------------
-SCORING (0–100):
-------------------------------------------------
-- Resume skill match (0–35)
-- Clarity of ask (0–20)
-- Seriousness / legitimacy (0–20)
-- Effort vs payoff (0–15)
-- Platform signal (0–10)
-
-OPPORTUNITY:
-Title: {title}
-Content: {content}
-`;
-
-export const HIGH_VALUE_PROMPT = `Answer ONLY "YES" or "NO".
-
-Return "YES" only if ALL are true:
-1. opportunityScore ≥ 80
-2. Category is job, freelance, or collab
-3. Requires skills present in resume
-4. Mentions concrete scope, payment, or serious build
-5. Not generic or speculative
-
-Opportunity:
-{title}
-{content}
-`;
 
 export const REPLY_PROMPT = `Write a structured, professional first-person reply to this opportunity.
 
@@ -127,13 +22,18 @@ Category: {category}
 Reply:
 `;
 
-export const COVER_LETTER_PROMPT = `Write a short, personal cover letter.
+export const COVER_LETTER_PROMPT = `Write a professional cover letter with exactly 3 paragraphs.
 
-Rules:
-- Max 80 words
-- Mention ONE relevant skill or project
+CRITICAL REQUIREMENTS:
+- Minimum 100 words (aim for 100-150 words)
+- Exactly 3 paragraphs:
+  1. Introduction: Context about the opportunity + why you're interested
+  2. Skills & Relevance: Specific skills from your resume that match the opportunity + how you can contribute
+  3. Closing: Clear intent to discuss further + professional closing
 - Human, non-corporate tone
-- No filler
+- Reference 2-3 specific skills or projects from resume
+- No filler or generic phrases
+- Be specific about your value proposition
 
 Post:
 {title}
@@ -146,7 +46,6 @@ Cover Letter:
 `;
 
 export const RESUME_PROMPT = `IMPORTANT:
-- You MUST NOT generate this unless evaluateHighValue returned "YES".
 - Use ONLY resume data provided.
 - Return STRICT JSON only.
 
@@ -222,3 +121,5 @@ Category: {category}
 Resume data: {resume}
 
 Return ONLY the JSON object:`;
+
+

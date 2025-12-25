@@ -1,85 +1,3 @@
-import { 
-  OPPORTUNITY_KEYWORDS, 
-  TECH_KEYWORDS, 
-  EXCLUSION_KEYWORDS,
-  GITHUB_SKILL_KEYWORDS,
-  HACKERNEWS_TARGET_PATTERNS
-} from './config.js';
-
-export function isForHirePost(text) {
-  const lowerText = text.toLowerCase();
-  return EXCLUSION_KEYWORDS.some(keyword => lowerText.includes(keyword));
-}
-
-export function matchesKeywords(text, requireTechKeyword = true) {
-  if (isForHirePost(text)) {
-    return false;
-  }
-  
-  const lowerText = text.toLowerCase();
-  
-  const hasOpportunityKeyword = OPPORTUNITY_KEYWORDS.some(keyword => 
-    lowerText.includes(keyword.toLowerCase())
-  );
-  
-  if (!hasOpportunityKeyword) {
-    return false;
-  }
-  
-  if (!requireTechKeyword) {
-    return true;
-  }
-  
-  const hasTechKeyword = TECH_KEYWORDS.some(keyword => 
-    lowerText.includes(keyword.toLowerCase())
-  );
-  
-  return hasTechKeyword;
-}
-
-export function matchesSkillFilter(title, body, skills = []) {
-  const text = `${title} ${body}`.toLowerCase();
-  const skillKeywords = skills.length > 0 ? skills : GITHUB_SKILL_KEYWORDS;
-  return skillKeywords.some(keyword => text.includes(keyword));
-}
-
-export function matchesProductHuntCollabFilter(name, tagline, description) {
-  const text = `${name} ${tagline || ''} ${description || ''}`.toLowerCase();
-  const collabKeywords = ['collab', 'open source', 'contributors', 'hiring', 'early stage', 'looking for dev', 'looking for engineer'];
-  return collabKeywords.some(keyword => text.includes(keyword));
-}
-
-export function shouldExcludeProductHunt(description) {
-  if (!description) return false;
-  const text = description.toLowerCase();
-  const excludePatterns = ['launched', 'v1 complete', 'fully built', 'scaling'];
-  return excludePatterns.some(pattern => text.includes(pattern));
-}
-
-export function matchesHackerNewsPaidRoleFilter(title, content) {
-  const text = `${title} ${content || ''}`.toLowerCase();
-  const paidKeywords = ['contract', 'freelance', 'part-time', 'remote', 'paid', 'looking for developer', 'looking for engineer'];
-  return paidKeywords.some(keyword => text.includes(keyword));
-}
-
-export function shouldExcludeHackerNews(content) {
-  if (!content) return false;
-  const text = content.toLowerCase();
-  const excludePatterns = ['email us', 'contact us'];
-  const hasTechRole = ['developer', 'engineer', 'programmer', 'software', 'backend', 'frontend'].some(term => text.includes(term));
-  return excludePatterns.some(pattern => text.includes(pattern)) && !hasTechRole;
-}
-
-export function matchesHiringTitle(title) {
-  if (!title) return false;
-  
-  const titleLower = title.toLowerCase()
-    .replace(/\([^)]*\)/g, '')
-    .replace(/\[[^\]]*\]/g, '')
-    .trim();
-  
-  return HACKERNEWS_TARGET_PATTERNS.some(pattern => titleLower.includes(pattern));
-}
 
 /**
  * Bucket items by recency (for GitHub issues)
@@ -163,16 +81,6 @@ export async function processBatchesSequentially(buckets, processFn) {
   await processFn(buckets.twoToSevenDays, 'week');
 }
 
-/**
- * Build GitHub search queries for a given date string
- */
-export function buildGitHubSearchQueries(dateStr) {
-  return [
-    `is:issue is:open label:"good first issue" created:>=${dateStr}`,
-    `is:issue is:open "need help" created:>=${dateStr}`,
-    `is:issue is:open "seeking developer" created:>=${dateStr}`
-  ];
-}
 
 /**
  * Calculate batch size and estimated batches for classification buffer

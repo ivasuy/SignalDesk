@@ -1,9 +1,5 @@
-import { productHuntRequest } from './api.js';
-import { 
-  checkIngestionExists,
-  saveIngestionRecord,
-  generateContentHash
-} from '../../db/ingestion.js';
+import { fetchProductHuntPosts } from './api.js';
+import { processProductHuntPost } from './helpers.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   generateRunId, 
@@ -18,77 +14,9 @@ import {
   formatISTTime
 } from '../../logs/index.js';
 import { connectDB } from '../../db/connection.js';
-import { calculateBatchSize, matchesProductHuntCollabFilter, shouldExcludeProductHunt } from '../../utils/utils.js';
+import { calculateBatchSize } from '../../utils/utils.js';
+import { markPlatformIngestionComplete, getDailyDeliveryState } from '../../db/state.js';
 
-const POSTS_QUERY = `
-  query Posts($postedAfter: DateTime!, $first: Int!) {
-    posts(postedAfter: $postedAfter, first: $first, order: VOTES) {
-      edges {
-        node {
-          id
-          name
-          tagline
-          description
-          url
-          votesCount
-          createdAt
-          topics {
-            edges {
-              node {
-                name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function fetchProductHuntPosts() {
-  try {
-    const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-    
-    const dateStr = yesterday.toISOString();
-    
-    const data = await productHuntRequest(POSTS_QUERY, {
-      postedAfter: dateStr,
-      first: 50
-    });
-    
-    if (!data || !data.posts || !data.posts.edges) {
-      logError('Invalid response structure from Product Hunt API - missing posts.edges');
-      return [];
-    }
-    
-    if (data.posts.edges.length === 0) {
-      return [];
-    }
-    
-    const posts = data.posts.edges.map(edge => ({
-      id: edge.node.id,
-      name: edge.node.name,
-      tagline: edge.node.tagline,
-      description: edge.node.description,
-      url: edge.node.url,
-      votesCount: edge.node.votesCount,
-      createdAt: edge.node.createdAt,
-      topics: edge.node.topics?.edges?.map(t => t.node.name) || []
-    }));
-    
-    return posts;
-  } catch (error) {
-    logError(`Error fetching Product Hunt posts: ${error.message}`);
-    return [];
-  }
-}
 
 
 export async function scrapeProductHunt() {
@@ -126,56 +54,18 @@ export async function scrapeProductHunt() {
     const keywordFilterStart = Date.now();
     
     for (const post of posts) {
-      const normalizedPostId = `ph-${post.id}`;
-      const contentHash = generateContentHash(post.name, post.description || post.tagline || '');
+      const result = await processProductHuntPost(post);
       
-      const ingestionCheck = await checkIngestionExists('producthunt_ingestion', normalizedPostId, contentHash);
-      if (ingestionCheck.exists) {
-        stats.dedupCounts.already_classified++;
-        continue;
-      }
-      
-      const fullText = `${post.name}\n\n${post.tagline || ''}\n\n${post.description || ''}`;
-      const content = fullText.trim();
-      
-      const postAge = new Date() - new Date(post.createdAt);
-      const daysOld = postAge / (1000 * 60 * 60 * 24);
-      
-      if (daysOld > 14) {
-        continue;
-      }
-      
-      if (shouldExcludeProductHunt(post.description)) {
-        continue;
-      }
-      
-      if (!matchesProductHuntCollabFilter(post.name, post.tagline, post.description)) {
-        continue;
-      }
-      
-      await saveIngestionRecord('producthunt_ingestion', {
-        postId: normalizedPostId,
-        contentHash,
-        keywordMatched: true,
-        metadata: {
-          name: post.name,
-          tagline: post.tagline,
-          url: post.url
+      if (!result.shouldProcess) {
+        if (result.reason === 'already_classified') {
+          stats.dedupCounts.already_classified++;
         }
-      });
+        continue;
+      }
       
       stats.keywordFiltered++;
       
-      const bufferResult = await addToClassificationBuffer({
-        postId: normalizedPostId,
-        sourcePlatform: 'producthunt',
-        sourceContext: 'producthunt',
-        title: post.name,
-        content: content,
-        author: 'unknown',
-        permalink: post.url,
-        createdAt: new Date(post.createdAt)
-      });
+      const bufferResult = await addToClassificationBuffer(result.normalized);
       
       if (!bufferResult.buffered) {
         if (bufferResult.reason === 'already_processed') {
@@ -221,6 +111,18 @@ export async function scrapeProductHunt() {
     });
     
     logPlatformComplete('producthunt', runId);
+    
+    const allIngestionDone = await markPlatformIngestionComplete('producthunt');
+    if (allIngestionDone) {
+      const dailyState = await getDailyDeliveryState();
+      const bufferSizeAfter = await db.collection('classification_buffer').countDocuments({ classified: false });
+      
+      if (bufferSizeAfter === 0) {
+        logInfo('Ingestion complete. No items eligible for classification today.');
+      } else {
+        logInfo(`Ingestion complete. Waiting for classification to finish... (${bufferSizeAfter} items in buffer)`);
+      }
+    }
     
     return stats;
   } catch (error) {

@@ -9,7 +9,6 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logWhatsApp, logWhatsAppSent, logWhatsAppPDFSent, logWhatsAppReady, logWhatsAppAuthenticated, logWhatsAppQR, logError } from '../../logs/index.js';
 import { connectDB } from '../../db/connection.js';
-import { setupFeedbackHandler, sendDailyFeedbackForm as sendFeedbackForm } from './feedback.js';
 
 dotenv.config();
 
@@ -150,7 +149,6 @@ export function initializeWhatsApp() {
       client.on('ready', () => {
         isReady = true;
         logWhatsAppReady();
-        setupFeedbackHandler(client, formatPhoneNumber);
         resolve();
       });
 
@@ -256,12 +254,6 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
   }
 }
 
-export async function sendDailyFeedbackForm() {
-  if (!isReady || !client) {
-    throw new Error('WhatsApp client is not ready');
-  }
-  return await sendFeedbackForm(client, formatPhoneNumber);
-}
 
 async function updatePostAfterSending(postData) {
   try {

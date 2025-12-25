@@ -39,3 +39,17 @@ export async function searchIssues(query, sort = 'created', order = 'desc', perP
   return githubRequest(endpoint);
 }
 
+export function normalizeIssue(issue) {
+  const repoFullName = issue.repository_url ? issue.repository_url.split('/repos/')[1] : 'unknown';
+  return {
+    id: `github-${issue.id}`,
+    title: issue.title,
+    selftext: issue.body || '',
+    permalink: issue.html_url,
+    created_utc: Math.floor(new Date(issue.created_at).getTime() / 1000),
+    author: issue.user?.login || 'unknown',
+    source: 'github',
+    repoFullName: repoFullName
+  };
+}
+

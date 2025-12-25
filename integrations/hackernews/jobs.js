@@ -1,11 +1,6 @@
-import { getJobStories, getItem } from './api.js';
-import { 
-  checkIngestionExists,
-  saveIngestionRecord,
-  generateContentHash
-} from '../../db/ingestion.js';
-import { matchesKeywords, isForHirePost, filterByTimeBuckets, processBatchesSequentially } from '../../utils/utils.js';
-import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
+import { getJobStories, getItem, fetchJobDescription } from './api.js';
+import { filterByTimeBuckets, processBatchesSequentially } from '../../utils/utils.js';
+import { processHackerNewsJob } from './helpers.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   logPlatformStart, 
@@ -19,64 +14,6 @@ import {
 import { calculateBatchSize } from '../../utils/utils.js';
 import { connectDB } from '../../db/connection.js';
 
-function normalizeJob(job) {
-  const cleanedTitle = cleanTitle(job.title || 'Hacker News Job');
-  const cleanedText = cleanHTML(job.text || '');
-  
-  return {
-    id: `hn-job-${job.id}`,
-    title: cleanedTitle,
-    selftext: cleanedText,
-    permalink: job.url || `https://news.ycombinator.com/item?id=${job.id}`,
-    created_utc: job.time,
-    author: job.by || 'unknown',
-    source: 'hackernews-jobs',
-    jobUrl: job.url
-  };
-}
-
-async function fetchJobDescription(job) {
-  if (!job.url || !job.url.includes('ycombinator.com')) {
-    return job.text || '';
-  }
-  
-  try {
-    const response = await fetch(job.url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; HN-Scraper/1.0)'
-      },
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    if (!response.ok) return job.text || '';
-    
-    const html = await response.text();
-    
-    const patterns = [
-      /<div[^>]*class="job-description"[^>]*>([\s\S]*?)<\/div>/i,
-      /<article[^>]*>([\s\S]*?)<\/article>/i,
-      /<main[^>]*>([\s\S]*?)<\/main>/i,
-      /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i
-    ];
-    
-    for (const pattern of patterns) {
-      const textMatch = html.match(pattern);
-      if (textMatch) {
-        const text = textMatch[1]
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (text.length > 50) {
-          return text.substring(0, 2000);
-        }
-      }
-    }
-    
-    return job.text || '';
-  } catch (error) {
-    return job.text || '';
-  }
-}
 
 export async function scrapeJobs() {
   const now = new Date();
@@ -123,62 +60,26 @@ export async function scrapeJobs() {
       for (const job of jobBatch) {
         stats.scraped++;
         
-        if (isForHirePost(job.title) || (job.text && isForHirePost(job.text))) {
-          continue;
-        }
+        const result = await processHackerNewsJob(job, fetchJobDescription);
         
-        const jobDescription = await fetchJobDescription(job);
-        const jobWithDescription = {
-          ...job,
-          text: jobDescription || job.text || ''
-        };
-        const normalized = normalizeJob(jobWithDescription);
-        
-        const contentHash = generateContentHash(normalized.title, normalized.selftext);
-        
-        const ingestionCheck = await checkIngestionExists('hackernews_jobs_ingestion', normalized.id, contentHash);
-        if (ingestionCheck.exists) {
-          stats.dedupCounts.already_classified++;
-          continue;
-        }
-        
-        const titleMatch = matchesKeywords(normalized.title, false);
-        const bodyMatch = matchesKeywords(normalized.selftext, false);
-        
-        if (!titleMatch && !bodyMatch) {
-          await saveIngestionRecord('hackernews_jobs_ingestion', {
-            postId: normalized.id,
-            contentHash,
-            keywordMatched: false,
-            metadata: {
-              author: normalized.author,
-              title: normalized.title
-            }
-          });
-          continue;
-        }
-        
-        await saveIngestionRecord('hackernews_jobs_ingestion', {
-          postId: normalized.id,
-          contentHash,
-          keywordMatched: true,
-          metadata: {
-            author: normalized.author,
-            title: normalized.title
+        if (!result.shouldProcess) {
+          if (result.reason === 'already_classified') {
+            stats.dedupCounts.already_classified++;
           }
-        });
+          continue;
+        }
         
         stats.keywordFiltered++;
         
         const bufferResult = await addToClassificationBuffer({
-          postId: normalized.id,
+          postId: result.normalized.id,
           sourcePlatform: 'hn',
           sourceContext: 'jobs',
-          title: normalized.title,
-          content: normalized.selftext || '',
-          author: normalized.author,
-          permalink: normalized.permalink,
-          createdAt: new Date(normalized.created_utc * 1000)
+          title: result.normalized.title,
+          content: result.normalized.selftext || '',
+          author: result.normalized.author,
+          permalink: result.normalized.permalink,
+          createdAt: new Date(result.normalized.created_utc * 1000)
         });
         
         if (!bufferResult.buffered) {

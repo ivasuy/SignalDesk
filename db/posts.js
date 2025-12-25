@@ -32,6 +32,7 @@ export async function saveOpportunityPostToDatabase(postData) {
       feedbackRequestedAt: postData.feedbackRequestedAt || null,
       userFeedback: postData.userFeedback || null,
       responseDelayHours: postData.responseDelayHours || null,
+      rejectionReason: postData.rejectionReason || null,
       updatedAt: new Date()
     };
     
@@ -60,7 +61,7 @@ export async function updateOpportunityPostAfterSending(postData) {
   try {
     const db = await connectDB();
     const query = postData._id ? { _id: postData._id } : { postId: postData.postId };
-    await db.collection('posts').updateOne(
+    await db.collection(COLLECTION_NAME).updateOne(
       query,
       {
         $set: {

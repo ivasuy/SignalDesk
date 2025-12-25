@@ -1,7 +1,6 @@
 import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 import { logMongoDB, logMongoDBConnected } from '../logs/index.js';
-import { setupQueueIndexes } from '../queue/indexes.js';
 
 dotenv.config();
 
@@ -107,13 +106,6 @@ async function setupIndexes(db) {
       await collection.createIndex({ createdAt: 1 });
     } catch (error) {
     }
-  }
-  
-  // Setup queue indexes
-  try {
-    await setupQueueIndexes();
-  } catch (error) {
-    logMongoDB(`Warning: Could not setup queue indexes: ${error.message}`);
   }
 }
 

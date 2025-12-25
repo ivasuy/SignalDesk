@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { logAI } from '../logs/index.js';
+import { getDailyDeliveryState } from '../db/state.js';
 
 dotenv.config();
 
@@ -158,10 +159,45 @@ export function resetCostCounters() {
   costCounters.resume = 0;
 }
 
-setInterval(() => {
-  const counters = getCostCounters();
-  const total = counters.classification + counters.reply + counters.resume;
-  if (total > 0) {
-    logAI(`[COST] Groq calls today: classification=${counters.classification} replies=${counters.reply} resume=${counters.resume} total=${total}`);
+let costLogInterval = null;
+
+export function startCostLogging() {
+  if (costLogInterval) {
+    return;
   }
-}, 60000);
+  
+  costLogInterval = setInterval(async () => {
+    try {
+      const dailyState = await getDailyDeliveryState();
+      if (!dailyState.active) {
+        return;
+      }
+      
+      const counters = getCostCounters();
+      const total = counters.classification + counters.reply + counters.resume;
+      if (total > 0) {
+        logAI(`[COST] Groq calls today: classification=${counters.classification} replies=${counters.reply} resume=${counters.resume} total=${total}`);
+      }
+    } catch (error) {
+    }
+  }, 60000);
+}
+
+export function stopCostLogging() {
+  if (costLogInterval) {
+    clearInterval(costLogInterval);
+    costLogInterval = null;
+  }
+}
+
+export function getAICallCounts() {
+  const counters = getCostCounters();
+  return {
+    classification: counters.classification || 0,
+    reply: counters.reply || 0,
+    resume: counters.resume || 0,
+    total: (counters.classification || 0) + (counters.reply || 0) + (counters.resume || 0)
+  };
+}
+
+startCostLogging();
