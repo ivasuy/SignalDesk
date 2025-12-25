@@ -12,6 +12,8 @@ import {
   logPlatformStart, 
   logPlatformComplete, 
   logPlatformSummary,
+  logPlatformFetching,
+  stopPlatformFetching,
   logError,
   logPipelineState,
   formatISTTime
@@ -41,6 +43,7 @@ export async function scrapeReddit() {
   const fetchStartTime = Date.now();
   
   logPlatformStart('reddit', runId);
+  logPlatformFetching('reddit');
   
   const stats = {
     subreddits: {},
@@ -161,6 +164,7 @@ export async function scrapeReddit() {
     const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
     const sentToBuffer = stats.total.keywordFiltered - stats.dedupCounts.already_sent - stats.dedupCounts.already_in_buffer;
     
+    stopPlatformFetching('reddit');
     logPlatformSummary('reddit', runId, {
       dateFilter,
       collection: 'reddit_ingestion',

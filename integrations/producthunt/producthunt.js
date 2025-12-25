@@ -10,6 +10,8 @@ import {
   logPlatformStart, 
   logPlatformComplete, 
   logPlatformSummary,
+  logPlatformFetching,
+  stopPlatformFetching,
   logInfo,
   logError,
   logPipelineState,
@@ -94,6 +96,7 @@ export async function scrapeProductHunt() {
   const fetchStartTime = Date.now();
   
   logPlatformStart('producthunt', runId);
+  logPlatformFetching('producthunt');
   
   const stats = {
     scraped: 0,
@@ -147,7 +150,6 @@ export async function scrapeProductHunt() {
       }
       
       if (!matchesProductHuntCollabFilter(post.name, post.tagline, post.description)) {
-        logInfo(`[FILTER] Product Hunt skipped — low-signal / no collab: ${post.name}`);
         continue;
       }
       
@@ -193,6 +195,7 @@ export async function scrapeProductHunt() {
     
     const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
     
+    stopPlatformFetching('producthunt');
     logPlatformSummary('producthunt', runId, {
       dateFilter: dateStr,
       collection: 'producthunt_ingestion',

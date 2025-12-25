@@ -11,9 +11,9 @@ import {
   logError, 
   logWarn
 } from '../logs/index.js';
+import { startLoader, stopLoader } from '../logs/loader.js';
 import { connectDB } from '../db/connection.js';
 
-const HIGH_VALUE_THRESHOLD = 70;
 
 const MAX_BATCHES = 5;
 const BATCH_DELAY_MS = 2 * 60 * 1000 + Math.random() * 60 * 1000;
@@ -30,8 +30,13 @@ let currentRun = {
 
 async function processBatchItem(bufferItem, runId) {
   try {
-    const fullText = `${bufferItem.title}\n\n${bufferItem.content}`;
-    const classification = await classifyOpportunity(fullText, bufferItem.postId);
+    const fullText = `Title: ${bufferItem.title}\n\nContent: ${bufferItem.content}`;
+    const classification = await classifyOpportunity(
+      fullText, 
+      bufferItem.postId, 
+      bufferItem.sourcePlatform || 'unknown',
+      bufferItem.sourceContext || ''
+    );
     
     await markAsClassified(bufferItem.postId, {
       valid: classification.valid,
@@ -64,39 +69,63 @@ async function processBatchItem(bufferItem, runId) {
     let actionDecision = 'reply_only';
     let replyMode = 'outreach';
 
-    if (classification.opportunityScore >= 50) {
-      try {
-        replyText = await generateReply(
-          bufferItem.title,
-          bufferItem.content,
-          classification.category,
-          persona,
-          tone
-        );
-      } catch (error) {
-        logError(`Reply error ${bufferItem.postId}: ${error.message}`, { 
-          platform: bufferItem.sourcePlatform, 
-          stage: 'reply_generation', 
-          postId: bufferItem.postId,
-          action: 'continue'
-        });
+    if (classification.valid && classification.opportunityScore >= 50) {
+      if (bufferItem.sourcePlatform === 'github') {
+        logAI(`[COST] Skipped reply — GitHub never generates replies for ${bufferItem.postId}`);
+      } else {
+        try {
+          replyText = await generateReply(
+            bufferItem.title,
+            bufferItem.content,
+            classification.category,
+            persona,
+            tone
+          );
+        } catch (error) {
+          logError(`Reply error ${bufferItem.postId}: ${error.message}`, { 
+            platform: bufferItem.sourcePlatform, 
+            stage: 'reply_generation', 
+            postId: bufferItem.postId,
+            action: 'continue'
+          });
+        }
       }
     }
 
-    if (classification.opportunityScore >= HIGH_VALUE_THRESHOLD) {
+    if (bufferItem.sourcePlatform === 'hackernews' && classification.valid) {
+      logAI(`[AI] HackerNews accepted → generating resume/cover (always for HN)`);
+      actionDecision = 'reply_plus_resume';
+      try {
+        const { coverLetter, resume } = await generateCoverLetterAndResume(
+          bufferItem.title,
+          bufferItem.content,
+          classification.category
+        );
+        replyText = coverLetter || replyText;
+        resumeJSON = resume;
+      } catch (error) {
+        logError(`Resume error ${bufferItem.postId}: ${error.message}`, { 
+          platform: bufferItem.sourcePlatform, 
+          stage: 'resume_generation', 
+          postId: bufferItem.postId,
+          action: 'fallback enqueue'
+        });
+      }
+    } else if (classification.opportunityScore >= 80) {
       const fullText = `${bufferItem.title}\n\n${bufferItem.content}`;
       const categoryUpper = classification.category?.toUpperCase() || '';
       
       if (bufferItem.sourcePlatform === 'producthunt') {
-        logAI(`[COST] Skipped resume — Product Hunt never generates resumes for ${bufferItem.postId}`);
+        logAI(`[AI] High-value rejected → reply only (Product Hunt never generates resumes)`);
       } else if (bufferItem.sourcePlatform === 'github') {
-        logAI(`[COST] Skipped resume — GitHub never generates resumes for ${bufferItem.postId}`);
-      } else {
+        logAI(`[AI] High-value rejected → no reply (GitHub never generates replies/resumes)`);
+      } else if (bufferItem.sourcePlatform === 'reddit') {
         const isHighValue = await evaluateHighValue(fullText, categoryUpper);
         
         if (!isHighValue) {
-          logAI(`[AI] High-value gate failed — resume skipped (score=${classification.opportunityScore}) for ${bufferItem.postId}`);
-        } else if (classification.opportunityScore >= 80) {
+          logAI(`[AI] High-value rejected → reply only (score=${classification.opportunityScore})`);
+        } else {
+          logAI(`[AI] High-value confirmed → generating resume/cover`);
           actionDecision = 'reply_plus_resume';
           try {
             const { coverLetter, resume } = await generateCoverLetterAndResume(
@@ -104,9 +133,8 @@ async function processBatchItem(bufferItem, runId) {
               bufferItem.content,
               classification.category
             );
-            replyText = coverLetter || replyText;
+            replyText = coverLetter;
             resumeJSON = resume;
-            logAI(`Resume generated: ${bufferItem.postId}`);
           } catch (error) {
             logError(`Resume error ${bufferItem.postId}: ${error.message}`, { 
               platform: bufferItem.sourcePlatform, 
@@ -167,8 +195,31 @@ async function processBatchItem(bufferItem, runId) {
 }
 
 
+let classificationLoaderActive = false;
+let classificationLoaderInterval = null;
+
+function startClassificationSpinner() {
+  if (classificationLoaderInterval) {
+    return;
+  }
+  
+  classificationLoaderInterval = startLoader('[CLASSIFIER] Processing opportunities');
+}
+
+function stopClassificationSpinner() {
+  if (classificationLoaderInterval) {
+    stopLoader();
+    classificationLoaderInterval = null;
+  }
+}
+
 export async function processClassificationBatch() {
   const batchStartTime = Date.now();
+  
+  if (!classificationLoaderActive) {
+    classificationLoaderActive = true;
+    startClassificationSpinner();
+  }
   
   try {
     let db;
@@ -238,6 +289,10 @@ export async function processClassificationBatch() {
     const batch = await getUnclassifiedBatch(currentRun.batchSize);
     
     if (batch.length === 0) {
+      if (classificationLoaderActive) {
+        stopClassificationSpinner();
+        classificationLoaderActive = false;
+      }
       currentRun = {
         initialBufferSize: 0,
         batchSize: 0,
@@ -250,6 +305,11 @@ export async function processClassificationBatch() {
 
     const sourcePlatforms = [...new Set(batch.map(item => item.sourcePlatform))];
     const batchSize = batch.length;
+
+    if (classificationLoaderActive) {
+      stopClassificationSpinner();
+      classificationLoaderActive = false;
+    }
 
     logClassifier(`Processing batch ${currentRun.currentBatchNumber}/${currentRun.totalBatches} (${batchSize} items)`);
 
@@ -287,11 +347,16 @@ export async function processClassificationBatch() {
     }
     
     process.stdout.write('\n');
-    logClassifier(`Batch ${currentRun.currentBatchNumber} complete (${processed}/${batchSize})`);
+    logClassifier(`[CLASSIFIER] Batch ${currentRun.currentBatchNumber}/${currentRun.totalBatches} complete — accepted=${accepted} rejected=${rejected} enqueued=${enqueued}`);
 
     await applyGitHubRepoCollapsing(processedItems);
 
     const batchDuration = Date.now() - batchStartTime;
+    
+    if (classificationLoaderActive && currentRun.currentBatchNumber >= currentRun.totalBatches) {
+      stopClassificationSpinner();
+      classificationLoaderActive = false;
+    }
     
     logClassifier('', { renderBatch: {
       batchNumber: currentRun.currentBatchNumber,

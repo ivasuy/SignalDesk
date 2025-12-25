@@ -8,7 +8,7 @@ import {
   getPostForSending
 } from '../db/queue.js';
 import { canSendMessage } from './constraints.js';
-import { updateDeliveryState } from '../db/state.js';
+import { updateDeliveryState, getDeliveryState } from '../db/state.js';
 import { 
   logQueue, 
   logError, 
@@ -44,6 +44,10 @@ function buildMessageFromPost(post) {
   let message = `Title: ${post.title || 'No title'}\n`;
   message += `Platform: ${post.sourcePlatform === 'hackernews' ? 'Hacker News' : post.sourcePlatform === 'producthunt' ? 'Product Hunt' : post.sourcePlatform.charAt(0).toUpperCase() + post.sourcePlatform.slice(1)}\n`;
   
+  if (post.category) {
+    message += `Category: ${post.category}\n`;
+  }
+  
   if (post.sourceContext) {
     if (post.sourcePlatform === 'reddit') {
       message += `Subreddit: r/${post.sourceContext}\n`;
@@ -58,6 +62,17 @@ function buildMessageFromPost(post) {
   }
   
   message += `Link: ${post.permalink || 'No link'}\n`;
+  
+  const hasResume = post.resumeJSON && typeof post.resumeJSON === 'string';
+  const isCoverLetterWithResume = post.actionDecision === 'reply_plus_resume' && hasResume;
+  
+  if (post.replyTextSent && post.replyTextSent.trim().length > 0) {
+    if (isCoverLetterWithResume) {
+      message += `\n---\n\n${post.replyTextSent}`;
+    } else if (post.actionDecision === 'reply_only') {
+      message += `\n---\n\n${post.replyTextSent}`;
+    }
+  }
   
   return message;
 }
@@ -110,15 +125,30 @@ async function processQueueItem(queueItem, totalPending, currentSent) {
           const fullPath = join(outputDir, filename);
           if (existsSync(fullPath)) {
             resumePDFPath = fullPath;
+          } else {
+            logError(`Resume file not found: ${resumePath} or ${fullPath}`, {
+              platform: post.sourcePlatform || 'N/A',
+              stage: 'resume_attachment',
+              postId: post.postId || 'N/A',
+              action: 'skip'
+            });
           }
         }
       }
     }
     
+    if (post.actionDecision === 'reply_plus_resume' && !resumePDFPath) {
+      logError(`Resume expected but not found for postId=${post.postId}`, {
+        platform: post.sourcePlatform || 'N/A',
+        stage: 'resume_attachment',
+        postId: post.postId || 'N/A',
+        action: 'continue'
+      });
+    }
+    
     const postData = getPostDataForSending(post);
-    const coverLetterText = post.replyTextSent || '';
     const hasResume = resumePDFPath !== null;
-    const hasCover = coverLetterText.length > 0;
+    const hasReply = post.replyTextSent && post.replyTextSent.trim().length > 0;
 
     try {
       await sendWhatsAppMessage(message, resumePDFPath, postData);
@@ -127,7 +157,11 @@ async function processQueueItem(queueItem, totalPending, currentSent) {
         logQueue(`[DELIVERY] Resume attached for postId=${queueItem.postId}`);
       }
       
-      const attachments = `resume=${hasResume ? 'yes' : 'no'} cover=${hasCover ? 'yes' : 'no'}`;
+      if (hasReply) {
+        logQueue(`[DELIVERY] Reply/Cover letter included for postId=${queueItem.postId}`);
+      }
+      
+      const attachments = `resume=${hasResume ? 'yes' : 'no'} reply=${hasReply ? 'yes' : 'no'}`;
       logQueue(`[DELIVERY] Attachments: ${attachments}`);
       
       await markQueueItemAsSent(queueItem._id, postData, updateOpportunityPostAfterSending);
@@ -166,6 +200,8 @@ export function setDeliveryTrigger(callback) {
 }
 
 export async function processQueue() {
+  let currentSentCount = 0;
+  
   try {
     const now = new Date();
     const db = await connectDB();
@@ -207,6 +243,24 @@ export async function processQueue() {
       return { processed: 0, reason: 'no_eligible_candidates' };
     }
     
+    const MIN_SEND_DELAY_MS = 60 * 1000;
+    
+    let deliveryState;
+    try {
+      deliveryState = await getDeliveryState();
+    } catch (error) {
+      deliveryState = { lastGlobalSentAt: null };
+    }
+    
+    if (deliveryState.lastGlobalSentAt) {
+      const timeSinceLastSend = now.getTime() - deliveryState.lastGlobalSentAt.getTime();
+      if (timeSinceLastSend < MIN_SEND_DELAY_MS) {
+        const remaining = Math.ceil((MIN_SEND_DELAY_MS - timeSinceLastSend) / 1000);
+        process.stdout.write(`\r[DELIVERY] Waiting ${remaining}s before next send (60s minimum)`);
+        return { processed: 0, reason: 'cooldown', remaining };
+      }
+    }
+    
     let sentToday;
     try {
       sentToday = await db.collection('delivery_queue').countDocuments({ 
@@ -217,7 +271,23 @@ export async function processQueue() {
       sentToday = 0;
     }
 
-    const queueItem = allCandidates[0];
+    let queueItem = allCandidates[0];
+    
+    const recentPlatforms = await db.collection('delivery_queue')
+      .find({ sent: true, sentAt: { $gte: new Date(now.getTime() - 2 * 60 * 1000) } })
+      .sort({ sentAt: -1 })
+      .limit(2)
+      .toArray();
+    
+    const recentPlatformSet = new Set(recentPlatforms.map(r => r.sourcePlatform));
+    
+    if (recentPlatformSet.has('github') && recentPlatformSet.size === 1 && queueItem.sourcePlatform === 'github') {
+      const nonGithub = allCandidates.find(c => c.sourcePlatform !== 'github');
+      if (nonGithub) {
+        queueItem = nonGithub;
+      }
+    }
+
     if (!queueItem) {
       return { processed: 0 };
     }
@@ -225,8 +295,7 @@ export async function processQueue() {
     const success = await processQueueItem(queueItem, totalPending, sentToday);
     
     if (success) {
-      process.stdout.write('\n');
-      logQueue(`✓ Sent via WhatsApp: ${queueItem.postId} (${queueItem.sourcePlatform})`);
+      process.stdout.write(`\r[QUEUE] Sending ${sentToday + 1}/${totalPending} — next send in 60s`);
     }
 
     return { processed: success ? 1 : 0, success };

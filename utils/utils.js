@@ -11,7 +11,7 @@ export function isForHirePost(text) {
   return EXCLUSION_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-export function matchesKeywords(text) {
+export function matchesKeywords(text, requireTechKeyword = true) {
   if (isForHirePost(text)) {
     return false;
   }
@@ -22,11 +22,19 @@ export function matchesKeywords(text) {
     lowerText.includes(keyword.toLowerCase())
   );
   
+  if (!hasOpportunityKeyword) {
+    return false;
+  }
+  
+  if (!requireTechKeyword) {
+    return true;
+  }
+  
   const hasTechKeyword = TECH_KEYWORDS.some(keyword => 
     lowerText.includes(keyword.toLowerCase())
   );
   
-  return hasOpportunityKeyword && hasTechKeyword;
+  return hasTechKeyword;
 }
 
 export function matchesSkillFilter(title, body, skills = []) {
@@ -156,32 +164,14 @@ export async function processBatchesSequentially(buckets, processFn) {
 }
 
 /**
- * Build GitHub search queries for a given date string with skill keywords
+ * Build GitHub search queries for a given date string
  */
-export function buildGitHubSearchQueries(dateStr, skills = []) {
-  const baseQueries = [
-    `is:issue is:open label:"help wanted" created:>=${dateStr}`,
+export function buildGitHubSearchQueries(dateStr) {
+  return [
     `is:issue is:open label:"good first issue" created:>=${dateStr}`,
-    `is:issue is:open label:"contract" created:>=${dateStr}`,
-    `is:issue is:open "looking for" created:>=${dateStr}`,
     `is:issue is:open "need help" created:>=${dateStr}`,
     `is:issue is:open "seeking developer" created:>=${dateStr}`
   ];
-  
-  if (skills.length === 0) {
-    return baseQueries;
-  }
-  
-  const skillQueries = [];
-  const topSkills = skills.slice(0, 10);
-  
-  for (const baseQuery of baseQueries) {
-    for (const skill of topSkills) {
-      skillQueries.push(`${baseQuery} "${skill}"`);
-    }
-  }
-  
-  return skillQueries;
 }
 
 /**

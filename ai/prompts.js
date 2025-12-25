@@ -1,127 +1,156 @@
-export const CLASSIFICATION_PROMPT = `Analyze this Reddit post and classify if it's a REAL OPPORTUNITY that matches the candidate's domain and experience.
+export const CLASSIFICATION_PROMPT = `CRITICAL: RETURN JSON ONLY. NO explanations. NO markdown. NO text before/after JSON. ANY extra text makes the response INVALID.
 
-CANDIDATE PROFILE:
-{resume}
-
-CRITICAL: REJECT posts that are:
-- "[FOR HIRE]" or "For Hire" posts - people offering their services (NOT seeking to hire)
-- "Looking for partner" or "Seeking partner" posts from NON-TECH roles (sales, marketing, business, consultants) - these are seeking developers but not as co-developers
-- "Developer looking to partner" with sales/marketing/business people - REJECT these
-- Showcasing/sharing completed projects ("I built...", "I made...", "Check out my...")
-- Asking for feedback on existing products ("feedback on my app", "what do you think")
-- General discussions or questions
-- Personal project announcements
-- "I've been building" posts without seeking help
-- Posts offering services ("I'm available", "I offer", "My services", "Hire me", "Rate: $X/hr")
-- Portfolio/showcase posts
-- Posts that don't match candidate's skills/experience domain
-
-ONLY ACCEPT posts that are:
-- Actively seeking developers/freelancers/contractors (someone wants to HIRE)
-- Developers/engineers looking for TECH PARTNERS/cofounders (another developer to build together) - ACCEPT these
-- Offering paid work TO developers (must mention payment/budget/compensation)
-- Seeking collaboration on NEW ventures (not existing products) - ONLY if from tech people
-- Product ideas seeking technical cofounder/developer - ONLY if from another developer
-- MUST match candidate's skills: React, Next.js, Java, Spring Boot, TypeScript, JavaScript, Node.js, full-stack, SaaS, APIs, MongoDB, etc.
-
-CATEGORIES:
-1. HIRING - Actively hiring developers (must mention payment/budget)
-2. FREELANCE - Seeking freelancers for paid project work
-3. COLLABORATION - Seeking technical partner/cofounder for NEW project/startup
-
-STRICT RULES:
-- Must be SEEKING TO HIRE someone (developer, freelancer, partner, cofounder) OR be a developer seeking another developer partner
-- MUST STRICTLY MATCH candidate's tech stack: React, Next.js, TypeScript, JavaScript, Node.js, Java, Spring Boot, MongoDB, PostgreSQL, AWS, GCP
-- ACCEPT: "Developer looking for developer partner" - two devs partnering is acceptable
-- REJECT if requires technologies NOT in candidate's resume (e.g., ASP.NET, C#, Python, Ruby, PHP, Go, Rust, etc.)
-- REJECT if requires senior/staff level experience beyond candidate's level (Junior to Mid-level)
-- REJECT: "[FOR HIRE] Web Developer..." - this is someone offering services, not seeking to hire
-- REJECT: "I'm available for work" - this is offering services
-- REJECT: "Sales/marketing/business person looking for developer partner" - this is hiring, not partnering
-- REJECT: "Looking for partner" from non-tech roles - these want to hire developers
-- REJECT: "I built X, feedback?" - this is showcasing, not seeking
-- REJECT: "I made Y, check it out" - this is sharing, not opportunity
-- REJECT: General questions or discussions
-- REJECT: Posts requiring skills/experience not in candidate's profile
-
-Return format: JSON only:
+You MUST return ONLY this exact JSON structure:
 {
   "valid": boolean,
   "category": "job" | "freelance" | "collab",
-  "opportunityScore": number (0-100),
-  "reasoning": "brief explanation"
+  "opportunityScore": number,
+  "reasoning": "one short sentence"
 }
 
-Scoring rules:
-- 0-49: reject (not a valid opportunity or poor fit)
-- 50-79: valid opportunity, reply only
-- 80-100: high-value opportunity, reply + resume
+Analyze the following opportunity and determine if it is a REAL, ACTIONABLE opportunity for the candidate.
 
-Score factors:
-- Relevance to resume skills (0-30 points)
-- Clarity of ask (0-20 points)
-- Seriousness/legitimacy (0-20 points)
-- Effort vs payoff (0-15 points)
-- Recency (0-10 points)
-- Platform quality signal (0-5 points)
-
-Post:`;
-
-export const HIGH_VALUE_PROMPT = `Evaluate if this opportunity is HIGH-VALUE enough to warrant generating a tailored resume and cover letter.
-
-HIGH-VALUE CRITERIA (ALL must be true):
-1. Category is HIRING, FREELANCE, or COLLABORATION
-2. Mentions specific budget/payment/compensation OR serious business opportunity
-3. Requires skills matching: React, Next.js, Java, Spring Boot, TypeScript, JavaScript, full-stack, backend, frontend, SaaS, APIs
-4. Not a generic "looking for dev" post - has specific requirements or project scope
-5. Appears legitimate and professional (not spam/scam)
-
-Return format: "YES" or "NO" (only)
-
-Post:`;
-
-export const REPLY_PROMPT = `Generate a short, professional reply that the candidate would write directly to this opportunity post. Write in FIRST PERSON ("I", "my", "me") as if the candidate is replying.
-
-CANDIDATE RESUME:
+CANDIDATE RESUME (GROUND TRUTH):
 {resume}
 
-Requirements:
-- 4-6 lines maximum
-- Write in FIRST PERSON (I have experience..., My background includes..., I've built...)
-- No emojis
-- Confident, human tone (not salesy)
-- Reference specific relevant experience from resume using "I" statements
-- Match the opportunity's requirements with candidate's skills
-- Show genuine interest based on actual experience
-- End with clear CTA to DM/connect
-- DO NOT mention the candidate's name
-- DO NOT write in third person
+SOURCE PLATFORM:
+{platform}
 
-Post title: {title}
-Post content: {content}
+SOURCE CONTEXT:
+{context}
+
+------------------------------------------------
+IMMEDIATE REJECTION (REJECT IF ANY TRUE):
+------------------------------------------------
+- Offering services ("for hire", "available", "my services")
+- Showcases, feedback requests, discussions, idea validation only
+- Completed product announcements
+- Non-technical founders seeking developers as employees
+- Requires skills NOT in resume (Python, PHP, Ruby, Go, Rust, .NET, etc.)
+- Senior/staff-level roles beyond junior–mid
+- Generic "looking for dev" without scope or intent
+- Compliance, legal, licensing, policy-only tasks
+- Non-engineering roles (PM-only, QA-only, marketing-only, sales-only)
+- Issues without coding, architecture, or implementation work
+
+------------------------------------------------
+PLATFORM-SPECIFIC ACCEPTANCE RULES:
+------------------------------------------------
+
+REDDIT / HACKERNEWS:
+Accept ONLY if:
+- Seeking developer / freelancer / tech cofounder
+- Mentions building something new OR paid work
+- Author intent is clear and serious
+
+GITHUB:
+Accept ONLY if:
+- Issue/discussion implies real implementation work
+- Mentions backend, frontend, infra, scraper, API, system work
+- Strong overlap with resume skills
+- Coding-heavy, architecture, or implementation work required
+Reject if:
+- Docs-only
+- Refactor-only
+- Maintenance-only
+- Review-only
+- Documentation-only
+- Governance-only
+- Compliance-only
+- Non-coding tasks
+HARD RULE: If GitHub AND not coding-heavy → valid=false
+
+PRODUCT HUNT:
+Accept ONLY if:
+- Very early-stage (MVP / beta / just launched)
+- Seeking technical collaborator or builder
+- Product domain matches resume (SaaS, backend, infra, AI tooling)
+Reject if:
+- Mature SaaS hiring
+- Marketing-only roles
+- No collaboration intent
+
+------------------------------------------------
+CATEGORIES:
+------------------------------------------------
+- job
+- freelance
+- collab
+
+------------------------------------------------
+SCORING (0–100):
+------------------------------------------------
+- Resume skill match (0–35)
+- Clarity of ask (0–20)
+- Seriousness / legitimacy (0–20)
+- Effort vs payoff (0–15)
+- Platform signal (0–10)
+
+OPPORTUNITY:
+Title: {title}
+Content: {content}
+`;
+
+export const HIGH_VALUE_PROMPT = `Answer ONLY "YES" or "NO".
+
+Return "YES" only if ALL are true:
+1. opportunityScore ≥ 80
+2. Category is job, freelance, or collab
+3. Requires skills present in resume
+4. Mentions concrete scope, payment, or serious build
+5. Not generic or speculative
+
+Opportunity:
+{title}
+{content}
+`;
+
+export const REPLY_PROMPT = `Write a structured, professional first-person reply to this opportunity.
+
+CRITICAL RULES:
+- 4-5 lines max
+- First person only
+- Reference 1-2 specific skills from resume that match the opportunity
+- Explain briefly how you can contribute
+- Professional closing: "Happy to discuss further" or "Let me know if you'd like to connect"
+- NEVER use generic phrases like "DM me", "Excited about", or vague enthusiasm
+- Be specific about your value proposition
+
+Candidate Resume:
+{resume}
+
+Post:
+Title: {title}
+Content: {content}
 Category: {category}
 
-Reply:`;
+Reply:
+`;
 
-export const COVER_LETTER_PROMPT = `Generate a short, personal cover letter for this opportunity.
+export const COVER_LETTER_PROMPT = `Write a short, personal cover letter.
 
-Requirements:
-- Maximum 100 words
-- Super short and specific
-- Personal, conversational tone (not corporate)
-- Address 1-2 key requirements from the post
-- Mention 1 relevant experience/skill from resume
-- Sound genuine and human
-- No fluff or generic phrases
+Rules:
+- Max 80 words
+- Mention ONE relevant skill or project
+- Human, non-corporate tone
+- No filler
 
-Post title: {title}
-Post content: {content}
-Category: {category}
-Resume data: {resume}
+Post:
+{title}
+{content}
 
-Cover Letter:`;
+Resume:
+{resume}
 
-export const RESUME_PROMPT = `Refactor the candidate's existing resume data into STRICT JSON format, tailored to highlight relevance for this opportunity. ONLY USE DATA FROM THE PROVIDED RESUME - DO NOT ADD, INVENT, OR CREATE NEW INFORMATION.
+Cover Letter:
+`;
+
+export const RESUME_PROMPT = `IMPORTANT:
+- You MUST NOT generate this unless evaluateHighValue returned "YES".
+- Use ONLY resume data provided.
+- Return STRICT JSON only.
+
+Refactor the candidate's existing resume data into STRICT JSON format, tailored to highlight relevance for this opportunity. ONLY USE DATA FROM THE PROVIDED RESUME - DO NOT ADD, INVENT, OR CREATE NEW INFORMATION.
 
 JSON Schema:
 {
@@ -193,80 +222,3 @@ Category: {category}
 Resume data: {resume}
 
 Return ONLY the JSON object:`;
-
-export const BUILDABLE_IDEA_PROMPT = `Evaluate if this Product Hunt startup idea can be built by ONE developer in ≤ 2 days. Match against the candidate's skills.
-
-CANDIDATE PROFILE:
-{resume}
-
-Product Hunt Post:
-- Name: {name}
-- Tagline: {tagline}
-- Description: {description}
-- Topics: {topics}
-- Votes: {votesCount}
-
-STRICT EVALUATION CRITERIA:
-
-REJECT if:
-- Complexity is NOT "low" (must be simple wrapper, automation, extension, micro-SaaS)
-- Requires infrastructure-heavy setup (marketplaces, platforms, complex backend)
-- Needs deep research or domain expertise
-- Requires multiple developers or team coordination
-- Needs technologies NOT in candidate's resume (e.g., Python, Ruby, Go, Rust, ASP.NET, C#)
-- Requires senior/staff level experience beyond candidate's level (Junior to Mid-level)
-
-ACCEPT if:
-- Can be built as a simple wrapper around existing APIs
-- Is an automation tool or browser extension
-- Is a micro-SaaS with minimal backend
-- Uses candidate's tech stack: Next.js, React, Node.js, Java, Spring Boot, MongoDB, PostgreSQL, AWS, GCP
-- Can be MVP'd in 1-2 days by one person
-- Solves a clear, specific problem
-
-Return ONLY valid JSON:
-{
-  "buildable_in_2_days": boolean,
-  "complexity": "low" | "medium" | "high",
-  "why": "Brief explanation of why it's buildable or not",
-  "suggested_mvp_scope": "What can be built in 2 days (1-2 sentences)",
-  "recommended_tech_stack": ["List of technologies from candidate's resume"],
-  "go_to_market_strategy": ["Strategy 1", "Strategy 2", "Strategy 3"],
-  "confidence_score": number (0-100)
-}`;
-
-export const COLLAB_OPPORTUNITY_PROMPT = `Evaluate if this Product Hunt startup represents a collaboration/hiring opportunity where the candidate would be a good technical fit.
-
-CANDIDATE PROFILE:
-{resume}
-
-Product Hunt Post:
-- Name: {name}
-- Tagline: {tagline}
-- Description: {description}
-- Topics: {topics}
-- Votes: {votesCount}
-
-EVALUATION CRITERIA:
-
-This is a startup that:
-- Has complexity > low (medium or high)
-- Cannot be built solo in 2 days
-- May need technical cofounder, freelance developer, or early hire
-- Founders are validating but need technical help
-
-Evaluate if candidate is a fit based on:
-- Tech stack alignment (Next.js, React, Node.js, Java, Spring Boot, MongoDB, PostgreSQL)
-- Experience level match (Junior to Mid-level)
-- Domain relevance (SaaS, APIs, full-stack, AI integrations)
-- Skills match (not requiring Python, Ruby, Go, Rust, ASP.NET, C#, etc.)
-
-Return ONLY valid JSON:
-{
-  "collaboration_fit": boolean,
-  "collaboration_type": "cofounder" | "freelance" | "early hire" | "technical partner",
-  "why_you_are_a_fit": "1-2 sentences explaining why candidate is a good fit",
-  "suggested_outreach": "Brief suggestion on how to reach out",
-  "confidence_score": number (0-100)
-}`;
-

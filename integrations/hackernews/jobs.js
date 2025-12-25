@@ -9,8 +9,9 @@ import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   logPlatformStart, 
-  logPlatformComplete, 
   logPlatformSummary,
+  logPlatformFetching,
+  stopPlatformFetching,
   logError,
   logPipelineState,
   formatISTTime
@@ -86,6 +87,7 @@ export async function scrapeJobs() {
   const runId = `hackernews-jobs-${year}${month}${day}-${hour}`;
   
   logPlatformStart('hackernews', runId);
+  logPlatformFetching('hackernews');
   
   const stats = {
     scraped: 0,
@@ -112,7 +114,10 @@ export async function scrapeJobs() {
       jobs.push(job);
     }
     
-    const timeBuckets = filterByTimeBuckets(jobs, 'time');
+    const now = Math.floor(Date.now() / 1000);
+    const oneDayAgo = now - (24 * 60 * 60);
+    
+    const recentJobs = jobs.filter(job => job.time >= oneDayAgo);
     
     const processJobs = async (jobBatch, batchName) => {
       for (const job of jobBatch) {
@@ -137,8 +142,8 @@ export async function scrapeJobs() {
           continue;
         }
         
-        const titleMatch = matchesKeywords(normalized.title);
-        const bodyMatch = matchesKeywords(normalized.selftext);
+        const titleMatch = matchesKeywords(normalized.title, false);
+        const bodyMatch = matchesKeywords(normalized.selftext, false);
         
         if (!titleMatch && !bodyMatch) {
           await saveIngestionRecord('hackernews_jobs_ingestion', {
@@ -186,12 +191,19 @@ export async function scrapeJobs() {
       }
     };
     
+    const timeBuckets = {
+      last24h: recentJobs,
+      oneToTwoDays: [],
+      twoToSevenDays: []
+    };
+    
     await processBatchesSequentially(timeBuckets, processJobs);
     
     const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
     
+    stopPlatformFetching('hackernews');
     logPlatformSummary('hackernews', runId, {
-      dateFilter: 'last 7 days',
+      dateFilter: 'last 24 hours',
       collection: 'hackernews_jobs_ingestion',
       totalFetched: stats.scraped,
       afterKeywordFilter: stats.keywordFiltered
@@ -213,8 +225,6 @@ export async function scrapeJobs() {
       queuePending,
       nextSend: nextQueueItem ? formatISTTime(nextQueueItem.earliestSendAt) : 'N/A'
     });
-    
-    logPlatformComplete('hackernews', runId);
     
     return stats;
   } catch (error) {

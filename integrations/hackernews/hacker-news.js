@@ -1,6 +1,6 @@
 import { scrapeAskHiring } from './hiring.js';
 import { scrapeJobs } from './jobs.js';
-import { logError } from '../../logs/index.js';
+import { logError, logPlatformComplete } from '../../logs/index.js';
 
 export async function scrapeHackerNews() {
   const stats = {
@@ -17,6 +17,8 @@ export async function scrapeHackerNews() {
     
     stats.askHiring = askHiringStats;
     stats.jobs = jobsStats;
+    
+    logPlatformComplete('hackernews', '');
     
     return stats; 
   } catch (error) {

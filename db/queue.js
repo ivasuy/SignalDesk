@@ -8,6 +8,13 @@ const LOCK_DURATION_MS = 2 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 15 * 60 * 1000;
 
+const PLATFORM_CAPS = {
+  github: 5,
+  reddit: 10,
+  hackernews: Infinity,
+  producthunt: Infinity
+};
+
 export async function enqueueOpportunity(opportunityData) {
   try {
     const db = await connectDB();
@@ -18,8 +25,41 @@ export async function enqueueOpportunity(opportunityData) {
     }
 
     if (opportunityScore < 50) {
-      logQueue(`Skipping enqueue: score ${opportunityScore} < 50 for postId ${postId}`);
       return { enqueued: false, reason: 'score_too_low' };
+    }
+
+    const platformCap = PLATFORM_CAPS[sourcePlatform] || Infinity;
+    if (platformCap !== Infinity) {
+      const pendingCount = await db.collection('delivery_queue').countDocuments({
+        sourcePlatform,
+        sent: false
+      });
+      
+      if (pendingCount >= platformCap) {
+        const allPending = await db.collection('delivery_queue')
+          .find({ sourcePlatform, sent: false })
+          .sort({ priority: -1, queuedAt: 1 })
+          .toArray();
+        
+        if (allPending.length >= platformCap) {
+          const scores = await Promise.all(allPending.map(async (item) => {
+            const post = await db.collection(COLLECTION_NAME).findOne({ postId: item.postId });
+            return { item, score: post?.opportunityScore || 0 };
+          }));
+          
+          scores.sort((a, b) => b.score - a.score);
+          const lowestScore = scores[scores.length - 1].score;
+          
+          if (opportunityScore <= lowestScore) {
+            logQueue(`[QUEUE] Dropped due to platform cap: ${sourcePlatform} (${pendingCount}/${platformCap})`);
+            return { enqueued: false, reason: 'platform_cap_exceeded' };
+          }
+          
+          const toRemove = scores[scores.length - 1].item;
+          await db.collection('delivery_queue').deleteOne({ _id: toRemove._id });
+          logQueue(`[QUEUE] Dropped lower-ranked item due to platform cap: ${sourcePlatform}`);
+        }
+      }
     }
 
     const existingInQueue = await db.collection('delivery_queue').findOne({

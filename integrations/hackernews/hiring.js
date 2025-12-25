@@ -9,8 +9,9 @@ import { cleanHTML, cleanTitle } from '../../utils/html-cleaner.js';
 import { addToClassificationBuffer } from '../../db/buffer.js';
 import { 
   logPlatformStart, 
-  logPlatformComplete, 
   logPlatformSummary,
+  logPlatformFetching,
+  stopPlatformFetching,
   logError,
   logPipelineState,
   formatISTTime
@@ -103,6 +104,7 @@ export async function scrapeAskHiring() {
   const runId = `hackernews-hiring-${year}${month}${day}-${hour}`;
   
   logPlatformStart('hackernews', runId);
+  logPlatformFetching('hackernews');
   
   const stats = {
     scraped: 0,
@@ -126,9 +128,17 @@ export async function scrapeAskHiring() {
     }
     
     const comments = await getTopLevelComments(hiringPost.id);
-    stats.scraped = comments.length;
+    const now = Math.floor(Date.now() / 1000);
+    const oneDayAgo = now - (24 * 60 * 60);
     
-    const timeBuckets = filterByTimeBuckets(comments, 'time');
+    const recentComments = comments.filter(comment => comment.time >= oneDayAgo);
+    stats.scraped = recentComments.length;
+    
+    const timeBuckets = {
+      last24h: recentComments,
+      oneToTwoDays: [],
+      twoToSevenDays: []
+    };
     
     const processComments = async (commentBatch, batchName) => {
       for (const comment of commentBatch) {
@@ -142,8 +152,8 @@ export async function scrapeAskHiring() {
           continue;
         }
         
-        const titleMatch = matchesKeywords(normalized.title);
-        const bodyMatch = matchesKeywords(normalized.selftext);
+        const titleMatch = matchesKeywords(normalized.title, false);
+        const bodyMatch = matchesKeywords(normalized.selftext, false);
         
         if (!titleMatch && !bodyMatch) {
           await saveIngestionRecord('hackernews_hiring_ingestion', {
@@ -195,8 +205,9 @@ export async function scrapeAskHiring() {
     
     const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
     
+    stopPlatformFetching('hackernews');
     logPlatformSummary('hackernews', runId, {
-      dateFilter: 'last 7 days',
+      dateFilter: 'last 24 hours',
       collection: 'hackernews_hiring_ingestion',
       totalFetched: stats.scraped,
       afterKeywordFilter: stats.keywordFiltered
@@ -218,8 +229,6 @@ export async function scrapeAskHiring() {
       queuePending,
       nextSend: nextQueueItem ? formatISTTime(nextQueueItem.earliestSendAt) : 'N/A'
     });
-    
-    logPlatformComplete('hackernews', runId);
     
     return stats;
   } catch (error) {

@@ -12,6 +12,8 @@ import {
   logPlatformStart, 
   logPlatformComplete, 
   logPlatformSummary,
+  logPlatformFetching,
+  stopPlatformFetching,
   logInfo,
   logError,
   logPipelineState,
@@ -74,6 +76,7 @@ export async function scrapeGitHub() {
   const runId = generateRunId('github');
   
   logPlatformStart('github', runId);
+  logPlatformFetching('github');
   
   const stats = {
     scraped: 0,
@@ -94,21 +97,20 @@ export async function scrapeGitHub() {
     const skills = loadResumeSkills();
     logInfo(`Loaded ${skills.length} skills from resume`, { runId });
     
-    const fourteenDaysAgo = new Date();
-    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
-    const dateStr = fourteenDaysAgo.toISOString().split('T')[0];
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+    const dateStr = oneDayAgo.toISOString().split('T')[0];
     
-    logInfo(`Searching for issues created after ${dateStr}`, { runId });
+    logInfo(`Searching for issues created after ${dateStr} (last 24 hours)`, { runId });
     
-    const queries = buildGitHubSearchQueries(dateStr, skills);
-    logInfo(`Built ${queries.length} skill-filtered queries`, { runId });
+    const queries = buildGitHubSearchQueries(dateStr);
     
     const allIssues = [];
     const seenIssueIds = new Set();
     
     for (const query of queries) {
       try {
-        const response = await searchIssues(query, 'created', 'desc', 30);
+        const response = await searchIssues(query, 'created', 'desc', 50);
         
         if (response && response.items && response.items.length > 0) {
           for (const issue of response.items) {
@@ -119,8 +121,13 @@ export async function scrapeGitHub() {
           }
         }
         
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
+        if (error.message.includes('rate limit')) {
+          logError(`GitHub rate limit hit. Waiting before retry...`, { runId });
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          continue;
+        }
         stats.errors++;
         logError(`Error executing query "${query}": ${error.message}`, { runId });
       }
@@ -132,7 +139,7 @@ export async function scrapeGitHub() {
       return stats;
     }
     
-    logInfo(`Found ${allIssues.length} unique issues before repo deduplication`, { runId });
+    logInfo(`Found ${allIssues.length} unique issues before filtering`, { runId });
     
     const repoGroups = {};
     for (const issue of allIssues) {
@@ -233,6 +240,7 @@ export async function scrapeGitHub() {
     
     const totalDedup = Object.values(stats.dedupCounts).reduce((a, b) => a + b, 0);
     
+    stopPlatformFetching('github');
     logPlatformSummary('github', runId, {
       dateFilter: dateStr,
       collection: 'github_ingestion',
