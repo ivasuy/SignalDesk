@@ -80,9 +80,9 @@ export function normalizeHackerNewsPost(normalized) {
   };
 }
 
-export async function shouldProcessHackerNewsPost(normalized) {
+export async function shouldProcessHackerNewsPost(normalized, ingestionCollection = 'hackernews_jobs_ingestion') {
   const contentHash = generateContentHash(normalized.title, normalized.selftext);
-  const ingestionCheck = await checkIngestionExists('hackernews_jobs_ingestion', normalized.id, contentHash);
+  const ingestionCheck = await checkIngestionExists(ingestionCollection, normalized.id, contentHash);
   
   if (ingestionCheck.exists) {
     return { shouldProcess: false };
@@ -90,6 +90,14 @@ export async function shouldProcessHackerNewsPost(normalized) {
   
   if (!shouldIncludeHackerNewsPost(normalized.title, normalized.selftext, false)) {
     return { shouldProcess: false };
+  }
+  
+  // If already normalized (has postId), return as-is, otherwise normalize
+  if (normalized.postId) {
+    return {
+      shouldProcess: true,
+      normalized
+    };
   }
   
   return {

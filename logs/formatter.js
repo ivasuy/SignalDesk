@@ -1,17 +1,5 @@
-import chalk from 'chalk';
 import { PLATFORM_LABELS } from './constants.js';
 import { THEMES } from './themes.js';
-
-function getChalkColor(colorName) {
-  if (colorName.startsWith('#')) {
-    return chalk.hex(colorName);
-  }
-  if (colorName.includes('.')) {
-    const [style, color] = colorName.split('.');
-    return chalk[style]?.[color] || chalk[color] || chalk.white;
-  }
-  return chalk[colorName] || chalk.white;
-}
 
 export function formatTimestamp() {
   return THEMES.MUTED(`[${new Date().toISOString()}]`);

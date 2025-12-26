@@ -2,6 +2,7 @@ import { skillFilterMatch } from '../skillFilter.js';
 import { classifyOpportunity } from '../classify.js';
 import { generateReply } from '../contentGenerator.js';
 import { logAI } from '../../logs/index.js';
+import { getAICallCounts } from '../api.js';
 
 // Note: shouldExcludeProductHunt() already checked in filters/producthunt.js
 // This only applies additional ProductHunt-specific hard rules
@@ -24,8 +25,18 @@ export async function processProductHuntPosts(posts) {
   const stats = {
     keywordAccepted: 0,
     aiClassified: 0,
-    capAccepted: 0
+    capAccepted: 0,
+    aiCalls: {
+      skillFilter: 0,
+      classification: 0,
+      capSelection: 0,
+      reply: 0,
+      coverLetter: 0,
+      resume: 0
+    }
   };
+  
+  const initialCounts = getAICallCounts();
   
   const hardRuleFiltered = applyHardRuleFilters(posts);
   logAI(`[PRODUCTHUNT] After hard rules: ${hardRuleFiltered.length}`);
@@ -43,6 +54,8 @@ export async function processProductHuntPosts(posts) {
     }
   }
   
+  const afterSkillFilter = getAICallCounts();
+  stats.aiCalls.skillFilter = afterSkillFilter.skillFilter - initialCounts.skillFilter;
   stats.keywordAccepted = skillFiltered.length;
   logAI(`[PRODUCTHUNT] After skill filter: ${skillFiltered.length}`);
   
@@ -57,6 +70,8 @@ export async function processProductHuntPosts(posts) {
     post.opportunityScore = classification.opportunityScore;
   }
   
+  const afterClassification = getAICallCounts();
+  stats.aiCalls.classification = afterClassification.classification - initialCounts.classification;
   const valid = skillFiltered.filter(p => p.classification?.valid && p.opportunityScore >= 50);
   stats.aiClassified = valid.length;
   logAI(`[PRODUCTHUNT] After classification: ${valid.length} valid`);
@@ -80,6 +95,9 @@ export async function processProductHuntPosts(posts) {
       post.actionDecision = 'skip';
     }
   }
+  
+  const finalCounts = getAICallCounts();
+  stats.aiCalls.reply = finalCounts.reply - initialCounts.reply;
   
   return { posts: valid.filter(p => p.actionDecision !== 'skip'), stats };
 }

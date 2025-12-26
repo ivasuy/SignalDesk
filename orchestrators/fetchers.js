@@ -44,12 +44,17 @@ export async function fetchRedditPosts() {
 
 export async function fetchHackerNewsPosts() {
   const posts = [];
+  let jobsFetched = 0;
+  let commentsFetched = 0;
   
   try {
     // Fetch Jobs
     const jobStories = await getJobStories();
     const oneDayAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
     const recentJobs = jobStories.filter(job => job.time >= oneDayAgo);
+    jobsFetched = recentJobs.length;
+    
+    logInfo(`[HACKERNEWS] Found ${recentJobs.length} recent job stories (from ${jobStories.length} total)`);
     
     for (const job of recentJobs) {
       try {
@@ -68,25 +73,45 @@ export async function fetchHackerNewsPosts() {
     try {
       const hiringPost = await findLatestHiringPost();
       if (hiringPost) {
+        logInfo(`[HACKERNEWS] Found hiring post: ${hiringPost.id}`);
         const comments = await getTopLevelComments(hiringPost.id);
         const recentComments = comments.filter(comment => comment.time >= oneDayAgo);
+        commentsFetched = recentComments.length;
+        
+        logInfo(`[HACKERNEWS] Found ${recentComments.length} recent comments (from ${comments.length} total)`);
         
         for (const comment of recentComments) {
           try {
             const normalized = normalizeHackerNewsComment(comment, hiringPost);
-            const result = await shouldProcessHackerNewsPost(normalized);
+            // normalized has: id, title, selftext, permalink, created_utc, author
+            // Convert to format expected by shouldProcessHackerNewsPost
+            const formatted = {
+              id: normalized.id,
+              title: normalized.title,
+              selftext: normalized.selftext,
+              author: normalized.author,
+              permalink: normalized.permalink,
+              created_utc: normalized.created_utc
+            };
+            const result = await shouldProcessHackerNewsPost(formatted, 'hackernews_hiring_ingestion');
             
             if (result.shouldProcess) {
+              // Update sourceContext for hiring comments
+              result.normalized.sourceContext = 'hiring';
               posts.push(result.normalized);
             }
           } catch (error) {
             logError(`Error processing HN comment ${comment.id}: ${error.message}`, { platform: 'hackernews', stage: 'fetch_hiring' });
           }
         }
+      } else {
+        logInfo(`[HACKERNEWS] No hiring post found`);
       }
     } catch (error) {
       logError(`Error fetching HN hiring posts: ${error.message}`, { platform: 'hackernews', stage: 'fetch_hiring' });
     }
+    
+    logInfo(`[HACKERNEWS] Fetched ${posts.length} posts (from ${jobsFetched} jobs + ${commentsFetched} comments)`);
   } catch (error) {
     logError(`Error fetching HackerNews posts: ${error.message}`, { platform: 'hackernews', stage: 'fetch' });
   }
@@ -153,19 +178,30 @@ export async function fetchGitHubPosts() {
     
     // Hard filter by skills BEFORE processing (to reduce AI calls)
     const skillFilteredIssues = [];
+    const seenRepos = new Set(); // Track repos to ensure uniqueness
+    
     for (const issue of allIssues) {
       const normalized = normalizeIssue(issue);
       const title = normalized.title || '';
       const body = normalized.selftext || '';
+      const repoFullName = normalized.repoFullName || '';
       
       // Skip non-tech issues immediately
       if (isNonTechIssue(title, body)) {
         continue;
       }
       
+      // Enforce uniqueness: only 1 issue per repo
+      if (repoFullName && seenRepos.has(repoFullName)) {
+        continue;
+      }
+      
       // Check skill match
       if (matchesSkillFilter(title, body, skills)) {
         skillFilteredIssues.push(normalized);
+        if (repoFullName) {
+          seenRepos.add(repoFullName);
+        }
         
         // Stop once we have enough
         if (skillFilteredIssues.length >= MAX_ISSUES) {
@@ -174,7 +210,7 @@ export async function fetchGitHubPosts() {
       }
     }
     
-    logInfo(`[GITHUB] Fetched ${allIssues.length} issues, skill-filtered to ${skillFilteredIssues.length} (max ${MAX_ISSUES})`);
+    logInfo(`[GITHUB] Fetched ${allIssues.length} issues, skill-filtered to ${skillFilteredIssues.length} (max ${MAX_ISSUES}, unique repos: ${seenRepos.size})`);
     
     // Process only the skill-filtered issues
     for (const normalized of skillFilteredIssues) {

@@ -34,7 +34,7 @@ async function processPlatformPosts(posts, platform) {
         aiClassified: 0,
         capAccepted: 0,
         sent: 0,
-        aiCalls: 0,
+        aiCalls: {},
         errors: 0,
         duration: `${duration}ms`
       });
@@ -51,7 +51,7 @@ async function processPlatformPosts(posts, platform) {
         aiClassified: 0,
         capAccepted: 0,
         sent: 0,
-        aiCalls: 0,
+        aiCalls: {},
         errors: 0,
         duration: `${duration}ms`
       });
@@ -98,11 +98,14 @@ async function processPlatformPosts(posts, platform) {
     }
     
     const processedPosts = result.posts || [];
-    const platformStats = result.stats || { keywordAccepted: 0, aiClassified: 0, capAccepted: 0 };
+    const platformStats = result.stats || { 
+      keywordAccepted: 0, 
+      aiClassified: 0, 
+      capAccepted: 0,
+      aiCalls: {}
+    };
     
     if (processedPosts.length === 0) {
-      const finalAICalls = getAICallCounts();
-      const aiCalls = finalAICalls.total - initialAICalls.total;
       const duration = Date.now() - startTime;
       
       logPlatformSummary(platform, {
@@ -111,16 +114,23 @@ async function processPlatformPosts(posts, platform) {
         aiClassified: platformStats.aiClassified,
         capAccepted: platformStats.capAccepted,
         sent: 0,
-        aiCalls,
+        aiCalls: platformStats.aiCalls || {},
         errors,
         duration: `${duration}ms`
       });
+      
+      const totalAICalls = (platformStats.aiCalls?.skillFilter || 0) + 
+                          (platformStats.aiCalls?.classification || 0) + 
+                          (platformStats.aiCalls?.capSelection || 0) + 
+                          (platformStats.aiCalls?.reply || 0) + 
+                          (platformStats.aiCalls?.coverLetter || 0) + 
+                          (platformStats.aiCalls?.resume || 0);
       
       return { 
         fetched: posts.length, 
         processed: filtered.length, 
         sent: 0, 
-        aiCalls, 
+        aiCalls: totalAICalls, 
         errors,
         keywordAccepted: platformStats.keywordAccepted,
         aiClassified: platformStats.aiClassified,
@@ -136,8 +146,6 @@ async function processPlatformPosts(posts, platform) {
       logError(`Error sending ${platform} posts: ${error.message}`, { platform, stage: 'delivery' });
     }
     
-    const finalAICalls = getAICallCounts();
-    const aiCalls = finalAICalls.total - initialAICalls.total;
     const duration = Date.now() - startTime;
     
     logPlatformSummary(platform, {
@@ -146,16 +154,23 @@ async function processPlatformPosts(posts, platform) {
       aiClassified: platformStats.aiClassified,
       capAccepted: platformStats.capAccepted,
       sent,
-      aiCalls,
+      aiCalls: platformStats.aiCalls || {},
       errors,
       duration: `${duration}ms`
     });
+    
+    const totalAICalls = (platformStats.aiCalls?.skillFilter || 0) + 
+                        (platformStats.aiCalls?.classification || 0) + 
+                        (platformStats.aiCalls?.capSelection || 0) + 
+                        (platformStats.aiCalls?.reply || 0) + 
+                        (platformStats.aiCalls?.coverLetter || 0) + 
+                        (platformStats.aiCalls?.resume || 0);
     
     return { 
       fetched: posts.length, 
       processed: filtered.length, 
       sent, 
-      aiCalls, 
+      aiCalls: totalAICalls, 
       errors,
       keywordAccepted: platformStats.keywordAccepted,
       aiClassified: platformStats.aiClassified,

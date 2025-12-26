@@ -68,7 +68,7 @@ export async function generateCoverLetter(title, content) {
       coverLetter = await groqRequest(
         [{ role: 'user', content: coverLetterPrompt }],
         { model: 'llama-3.3-70b-versatile', temperature: 0.7, max_tokens: 300 },
-        'resume'
+        'coverLetter'
       );
       
       const wordCount = countWords(coverLetter);

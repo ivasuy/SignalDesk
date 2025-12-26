@@ -48,7 +48,7 @@ export async function skillFilterMatch(postText, postId = null, platform = 'redd
     const result = await groqRequest(
       [{ role: 'user', content: prompt }],
       { model: 'llama-3.1-8b-instant', temperature: 0, top_p: 0.9, max_tokens: 50 },
-      'classification'
+      'skillFilter'
     );
     
     try {

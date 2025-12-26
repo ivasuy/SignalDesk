@@ -3,6 +3,7 @@ import { classifyOpportunity } from '../classify.js';
 import { selectTopOpportunitiesByCap } from '../selectByCap.js';
 import { generateCoverLetterAndResume, generateReply } from '../contentGenerator.js';
 import { logAI } from '../../logs/index.js';
+import { getAICallCounts } from '../api.js';
 
 const PLATFORM_CAP = 10;
 
@@ -28,8 +29,18 @@ export async function processRedditPosts(posts) {
   const stats = {
     keywordAccepted: 0,
     aiClassified: 0,
-    capAccepted: 0
+    capAccepted: 0,
+    aiCalls: {
+      skillFilter: 0,
+      classification: 0,
+      capSelection: 0,
+      reply: 0,
+      coverLetter: 0,
+      resume: 0
+    }
   };
+  
+  const initialCounts = getAICallCounts();
   
   const hardRuleFiltered = applyHardRuleFilters(posts);
   logAI(`[REDDIT] After hard rules: ${hardRuleFiltered.length}`);
@@ -47,6 +58,8 @@ export async function processRedditPosts(posts) {
     }
   }
   
+  const afterSkillFilter = getAICallCounts();
+  stats.aiCalls.skillFilter = afterSkillFilter.skillFilter - initialCounts.skillFilter;
   stats.keywordAccepted = skillFiltered.length;
   logAI(`[REDDIT] After skill filter: ${skillFiltered.length}`);
   
@@ -61,6 +74,8 @@ export async function processRedditPosts(posts) {
     post.opportunityScore = classification.opportunityScore;
   }
   
+  const afterClassification = getAICallCounts();
+  stats.aiCalls.classification = afterClassification.classification - initialCounts.classification;
   const valid = skillFiltered.filter(p => p.classification?.valid && p.opportunityScore >= 50);
   stats.aiClassified = valid.length;
   logAI(`[REDDIT] After classification: ${valid.length} valid`);
@@ -70,6 +85,8 @@ export async function processRedditPosts(posts) {
   }
   
   const selected = await selectTopOpportunitiesByCap(valid, 'reddit', PLATFORM_CAP);
+  const afterCapSelection = getAICallCounts();
+  stats.aiCalls.capSelection = afterCapSelection.capSelection - initialCounts.capSelection;
   stats.capAccepted = selected.length;
   logAI(`[REDDIT] After cap selection: ${selected.length}`);
   
@@ -96,6 +113,11 @@ export async function processRedditPosts(posts) {
       }
     }
   }
+  
+  const finalCounts = getAICallCounts();
+  stats.aiCalls.reply = finalCounts.reply - initialCounts.reply;
+  stats.aiCalls.coverLetter = finalCounts.coverLetter - initialCounts.coverLetter;
+  stats.aiCalls.resume = finalCounts.resume - initialCounts.resume;
   
   return { posts: selected.filter(p => p.actionDecision !== 'skip'), stats };
 }

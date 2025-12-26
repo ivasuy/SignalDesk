@@ -7,6 +7,10 @@ export function logPlatformSummary(platform, stats) {
   const label = PLATFORM_LABELS[platform] || `[${platform.toUpperCase()}]`;
   const platformColor = THEMES.PLATFORM[platform] || THEMES.INFO;
   
+  const aiCalls = stats.aiCalls || {};
+  const totalAICalls = (aiCalls.skillFilter || 0) + (aiCalls.classification || 0) + (aiCalls.capSelection || 0) + 
+                       (aiCalls.reply || 0) + (aiCalls.coverLetter || 0) + (aiCalls.resume || 0);
+  
   const title = `${platform.toUpperCase()} SUMMARY`;
   const rows = [
     renderKeyValue('Fetched', String(stats.fetched || 0)),
@@ -15,7 +19,14 @@ export function logPlatformSummary(platform, stats) {
     renderKeyValue('Cap Accepted', String(stats.capAccepted || 0)),
     renderKeyValue('Sent', String(stats.sent || 0)),
     '',
-    renderKeyValue('AI Calls', String(stats.aiCalls || 0)),
+    renderKeyValue('AI Calls (Total)', String(totalAICalls || stats.aiCalls || 0)),
+    renderKeyValue('  - Skill Filter', String(aiCalls.skillFilter || 0)),
+    renderKeyValue('  - Classification', String(aiCalls.classification || 0)),
+    renderKeyValue('  - Cap Selection', String(aiCalls.capSelection || 0)),
+    renderKeyValue('  - Reply', String(aiCalls.reply || 0)),
+    renderKeyValue('  - Cover Letter', String(aiCalls.coverLetter || 0)),
+    renderKeyValue('  - Resume', String(aiCalls.resume || 0)),
+    '',
     renderKeyValue('Errors', String(stats.errors || 0)),
     renderKeyValue('Duration', stats.duration || '0ms')
   ];

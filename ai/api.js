@@ -8,8 +8,9 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_BASE_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 const MAX_REQUESTS_PER_MINUTE = 20;
-const MAX_CONCURRENT_REQUESTS = 3;
+const MAX_CONCURRENT_REQUESTS = 2; // Reduced to prevent rate limits
 const TOKEN_REFILL_INTERVAL_MS = 3000;
+const MIN_DELAY_BETWEEN_REQUESTS = 150; // Add minimum delay between requests
 
 let availableTokens = MAX_REQUESTS_PER_MINUTE;
 let concurrentRequests = 0;
@@ -19,8 +20,11 @@ const requestQueue = [];
 let isProcessingQueue = false;
 
 const costCounters = {
+  skillFilter: 0,
   classification: 0,
+  capSelection: 0,
   reply: 0,
+  coverLetter: 0,
   resume: 0
 };
 
@@ -35,6 +39,8 @@ function refillTokens() {
   }
 }
 
+let lastRequestTime = 0;
+
 async function waitForToken() {
   while (availableTokens <= 0 || concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
     refillTokens();
@@ -47,9 +53,16 @@ async function waitForToken() {
     }
   }
   
+  // Enforce minimum delay between requests
+  const timeSinceLastRequest = Date.now() - lastRequestTime;
+  if (timeSinceLastRequest < MIN_DELAY_BETWEEN_REQUESTS) {
+    await new Promise(resolve => setTimeout(resolve, MIN_DELAY_BETWEEN_REQUESTS - timeSinceLastRequest));
+  }
+  
   refillTokens();
   availableTokens--;
   concurrentRequests++;
+  lastRequestTime = Date.now();
 }
 
 async function processQueue() {
@@ -109,7 +122,7 @@ async function makeGroqRequest(messages, options, purpose, retryCount = 0) {
     
     if (response.status === 429) {
       const retryAfter = parseInt(response.headers.get('retry-after') || '60', 10) * 1000;
-      logAI(`[RATE] Groq rate limited, retrying after ${retryAfter}ms`);
+      // Silently retry without logging
       await new Promise(resolve => setTimeout(resolve, retryAfter));
       return makeGroqRequest(messages, options, purpose, retryCount);
     }
@@ -124,10 +137,16 @@ async function makeGroqRequest(messages, options, purpose, retryCount = 0) {
     
     logAI(`[AI] Provider=groq model=${model} purpose=${purpose} latency=${latency}ms`);
     
-    if (purpose === 'classification') {
+    if (purpose === 'skillFilter') {
+      costCounters.skillFilter++;
+    } else if (purpose === 'classification') {
       costCounters.classification++;
+    } else if (purpose === 'capSelection') {
+      costCounters.capSelection++;
     } else if (purpose === 'reply') {
       costCounters.reply++;
+    } else if (purpose === 'coverLetter') {
+      costCounters.coverLetter++;
     } else if (purpose === 'resume') {
       costCounters.resume++;
     }
@@ -154,8 +173,11 @@ export function getCostCounters() {
 }
 
 export function resetCostCounters() {
+  costCounters.skillFilter = 0;
   costCounters.classification = 0;
+  costCounters.capSelection = 0;
   costCounters.reply = 0;
+  costCounters.coverLetter = 0;
   costCounters.resume = 0;
 }
 
@@ -174,9 +196,10 @@ export function startCostLogging() {
       }
       
       const counters = getCostCounters();
-      const total = counters.classification + counters.reply + counters.resume;
+      const total = (counters.skillFilter || 0) + (counters.classification || 0) + (counters.capSelection || 0) + 
+                    (counters.reply || 0) + (counters.coverLetter || 0) + (counters.resume || 0);
       if (total > 0) {
-        logAI(`[COST] Groq calls today: classification=${counters.classification} replies=${counters.reply} resume=${counters.resume} total=${total}`);
+        logAI(`[COST] Groq calls today: skillFilter=${counters.skillFilter || 0} classification=${counters.classification || 0} capSelection=${counters.capSelection || 0} reply=${counters.reply || 0} coverLetter=${counters.coverLetter || 0} resume=${counters.resume || 0} total=${total}`);
       }
     } catch (error) {
     }
@@ -193,10 +216,14 @@ export function stopCostLogging() {
 export function getAICallCounts() {
   const counters = getCostCounters();
   return {
+    skillFilter: counters.skillFilter || 0,
     classification: counters.classification || 0,
+    capSelection: counters.capSelection || 0,
     reply: counters.reply || 0,
+    coverLetter: counters.coverLetter || 0,
     resume: counters.resume || 0,
-    total: (counters.classification || 0) + (counters.reply || 0) + (counters.resume || 0)
+    total: (counters.skillFilter || 0) + (counters.classification || 0) + (counters.capSelection || 0) + 
+           (counters.reply || 0) + (counters.coverLetter || 0) + (counters.resume || 0)
   };
 }
 

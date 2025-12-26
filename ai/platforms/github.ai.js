@@ -2,6 +2,7 @@ import { skillFilterMatch } from '../skillFilter.js';
 import { classifyOpportunity } from '../classify.js';
 import { selectTopOpportunitiesByCap } from '../selectByCap.js';
 import { logAI } from '../../logs/index.js';
+import { getAICallCounts } from '../api.js';
 
 const PLATFORM_CAP = 5;
 
@@ -15,8 +16,18 @@ export async function processGitHubPosts(posts) {
   const stats = {
     keywordAccepted: 0,
     aiClassified: 0,
-    capAccepted: 0
+    capAccepted: 0,
+    aiCalls: {
+      skillFilter: 0,
+      classification: 0,
+      capSelection: 0,
+      reply: 0,
+      coverLetter: 0,
+      resume: 0
+    }
   };
+  
+  const initialCounts = getAICallCounts();
   
   const hardRuleFiltered = applyHardRuleFilters(posts);
   logAI(`[GITHUB] After hard rules: ${hardRuleFiltered.length}`);
@@ -34,6 +45,8 @@ export async function processGitHubPosts(posts) {
     }
   }
   
+  const afterSkillFilter = getAICallCounts();
+  stats.aiCalls.skillFilter = afterSkillFilter.skillFilter - initialCounts.skillFilter;
   stats.keywordAccepted = skillFiltered.length;
   logAI(`[GITHUB] After skill filter: ${skillFiltered.length}`);
   
@@ -54,6 +67,8 @@ export async function processGitHubPosts(posts) {
     post.opportunityScore = classification.opportunityScore;
   }
   
+  const afterClassification = getAICallCounts();
+  stats.aiCalls.classification = afterClassification.classification - initialCounts.classification;
   const valid = skillFiltered.filter(p => p.classification?.valid && p.opportunityScore >= 50);
   stats.aiClassified = valid.length;
   logAI(`[GITHUB] After classification: ${valid.length} valid`);
@@ -63,6 +78,8 @@ export async function processGitHubPosts(posts) {
   }
   
   const selected = await selectTopOpportunitiesByCap(valid, 'github', PLATFORM_CAP);
+  const afterCapSelection = getAICallCounts();
+  stats.aiCalls.capSelection = afterCapSelection.capSelection - initialCounts.capSelection;
   stats.capAccepted = selected.length;
   logAI(`[GITHUB] After cap selection: ${selected.length}`);
   
