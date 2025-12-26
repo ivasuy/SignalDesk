@@ -3,12 +3,12 @@ const { Client, LocalAuth, MessageMedia } = pkg;
 import qrcode from 'qrcode-terminal';
 import dotenv from 'dotenv';
 import { execSync, exec } from 'child_process';
-import { existsSync, unlinkSync, rmSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { logger } from '../../utils/logger.js';
-import { connectDB } from '../../utils/db.js';
+import { logWhatsApp, logWhatsAppSent, logWhatsAppPDFSent, logWhatsAppReady, logWhatsAppAuthenticated, logWhatsAppQR, logError } from '../../logs/index.js';
+import { connectDB } from '../../db/connection.js';
 
 dotenv.config();
 
@@ -17,7 +17,6 @@ const __dirname = dirname(__filename);
 
 let client = null;
 let isReady = false;
-let feedbackHandler = null;
 
 function getChromePath() {
   const chromePaths = [
@@ -45,7 +44,7 @@ function getChromePath() {
       }
     }
   } catch (error) {
-    // Fall through to default
+    
   }
 
   return undefined;
@@ -86,14 +85,14 @@ async function cleanupLockFiles() {
       if (existsSync(file)) {
         try {
           unlinkSync(file);
-          logger.whatsapp.log(`Cleaned up lock file: ${file.split('/').pop()}`);
+          logWhatsApp(`Cleaned up lock file: ${file.split('/').pop()}`);
         } catch (error) {
-          logger.whatsapp.log(`Lock file exists but could not be deleted: ${error.message}`);
+          logWhatsApp(`Lock file exists but could not be deleted: ${error.message}`);
         }
       }
     }
   } catch (error) {
-    logger.whatsapp.log(`Error during cleanup: ${error.message}`);
+    logWhatsApp(`Error during cleanup: ${error.message}`);
   }
 }
 
@@ -101,9 +100,9 @@ async function cleanupWhatsApp() {
   if (client) {
     try {
       await client.destroy();
-      logger.whatsapp.log('WhatsApp client destroyed');
+      logWhatsApp('WhatsApp client destroyed');
     } catch (error) {
-      logger.error.log(`Error destroying WhatsApp client: ${error.message}`);
+      logError(`Error destroying WhatsApp client: ${error.message}`);
     }
     client = null;
     isReady = false;
@@ -143,28 +142,27 @@ export function initializeWhatsApp() {
       });
 
       client.on('qr', (qr) => {
-        logger.whatsapp.qr();
+        logWhatsAppQR();
         qrcode.generate(qr, { small: true });
       });
 
       client.on('ready', () => {
         isReady = true;
-        logger.whatsapp.ready();
-        setupFeedbackHandler();
+        logWhatsAppReady();
         resolve();
       });
 
       client.on('authenticated', () => {
-        logger.whatsapp.authenticated();
+        logWhatsAppAuthenticated();
       });
 
       client.on('auth_failure', (msg) => {
-        logger.error.log(`WhatsApp authentication failed: ${msg}`);
+        logError(`WhatsApp authentication failed: ${msg}`);
         reject(new Error('WhatsApp authentication failed'));
       });
 
       client.on('disconnected', (reason) => {
-        logger.whatsapp.log(`WhatsApp client disconnected: ${reason}`);
+        logWhatsApp(`WhatsApp client disconnected: ${reason}`);
         isReady = false;
       });
 
@@ -176,7 +174,7 @@ export function initializeWhatsApp() {
           if ((error.message.includes('SingletonLock') || error.message.includes('Failed to launch')) && retryCount < maxRetries) {
             retryCount++;
             await cleanupLockFiles();
-            logger.whatsapp.log(`Retrying after cleaning lock files (attempt ${retryCount}/${maxRetries})...`);
+            logWhatsApp(`Retrying after cleaning lock files (attempt ${retryCount}/${maxRetries})...`);
             setTimeout(() => {
               attemptInitialize();
             }, 3000);
@@ -207,15 +205,6 @@ function formatPhoneNumber(number) {
   return cleaned + '@c.us';
 }
 
-const FEEDBACK_BLOCK = `---
-FEEDBACK (reply with ONE letter only):
-[A] No response yet
-[B] Rejected
-[C] Got a reply
-[D] Call scheduled
-[E] Hired / Collab started
----`;
-
 export async function sendWhatsAppMessage(message, pdfPath = null, postData = null) {
   if (!isReady || !client) {
     throw new Error('WhatsApp client is not ready');
@@ -229,31 +218,29 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
     
     const chatId = formatPhoneNumber(receiverNumber);
     
-    const fullMessage = message + '\n\n' + FEEDBACK_BLOCK;
-    
     const sendMessage = async (targetChatId) => {
-      await client.sendMessage(targetChatId, fullMessage);
+      await client.sendMessage(targetChatId, message);
       
       if (pdfPath && existsSync(pdfPath)) {
         const media = MessageMedia.fromFilePath(pdfPath);
         await client.sendMessage(targetChatId, media, { caption: 'Tailored Resume' });
-        logger.whatsapp.pdfSent();
+        logWhatsAppPDFSent();
       }
     };
     
     try {
       await sendMessage(chatId);
-      logger.whatsapp.sent();
+      logWhatsAppSent();
       
       if (postData) {
-        await updatePostAfterSending(postData);
+          await updatePostAfterSending(postData);
       }
     } catch (sendError) {
       if (sendError.message.includes('LID')) {
         const numberOnly = receiverNumber.replace(/[^\d]/g, '');
         const alternativeChatId = `${numberOnly}@s.whatsapp.net`;
         await sendMessage(alternativeChatId);
-        logger.whatsapp.log('Message sent (alternative format)');
+        logWhatsApp('Message sent (alternative format)');
         
         if (postData) {
           await updatePostAfterSending(postData);
@@ -267,108 +254,31 @@ export async function sendWhatsAppMessage(message, pdfPath = null, postData = nu
   }
 }
 
+
 async function updatePostAfterSending(postData) {
   try {
     const db = await connectDB();
     const query = postData._id ? { _id: postData._id } : { postId: postData.postId };
-    await db.collection('posts').updateOne(
+    await db.collection('opportunities').updateOne(
       query,
       {
         $set: {
           replyTextSent: postData.replyTextSent || '',
           personaUsed: postData.personaUsed || 'engineer',
           toneUsed: postData.toneUsed || 'professional',
+          replyMode: postData.replyMode || null, 
           sentAt: new Date(),
           feedbackStatus: 'pending',
+          feedbackRequestedAt: null,
           actionDecision: postData.actionDecision || 'reply_only',
-          coverLetterJSON: postData.coverLetterJSON || null,
           resumeJSON: postData.resumeJSON || null
         }
       }
     );
   } catch (error) {
-    logger.error.log(`Error updating post after sending: ${error.message}`);
+    logError(`Error updating post after sending: ${error.message}`);
   }
 }
 
-function setupFeedbackHandler() {
-  if (!client) return;
-  
-  client.on('message', async (message) => {
-    try {
-      const receiverNumber = process.env.RECEIVER_WHATSAPP_NUMBER;
-      if (!receiverNumber) return;
-      
-      const chatId = formatPhoneNumber(receiverNumber);
-      const messageChatId = message.from;
-      
-      if (messageChatId !== chatId && !messageChatId.includes(receiverNumber.replace(/[^\d]/g, ''))) {
-        return;
-      }
-      
-      const body = message.body?.trim().toUpperCase();
-      if (!body || body.length !== 1) return;
-      
-      if (!['A', 'B', 'C', 'D', 'E'].includes(body)) return;
-      
-      await processFeedback(body);
-    } catch (error) {
-      logger.error.log(`Error processing feedback: ${error.message}`);
-    }
-  });
-}
 
-async function processFeedback(feedbackLetter) {
-  try {
-    const db = await connectDB();
-    
-    const feedbackMap = {
-      'A': 'no_response',
-      'B': 'rejected',
-      'C': 'replied',
-      'D': 'call',
-      'E': null
-    };
-    
-    const feedbackValue = feedbackMap[feedbackLetter];
-    
-    const mostRecentPending = await db.collection('posts').findOne(
-      { feedbackStatus: 'pending' },
-      { sort: { sentAt: -1 } }
-    );
-    
-    if (!mostRecentPending) {
-      logger.whatsapp.log('No pending feedback found');
-      return;
-    }
-    
-    let finalFeedback = feedbackValue;
-    if (feedbackLetter === 'E') {
-      finalFeedback = mostRecentPending.category === 'collab' ? 'collab_started' : 'hired';
-    }
-    
-    const now = new Date();
-    const sentAt = mostRecentPending.sentAt || mostRecentPending.createdAt;
-    const responseDelayHours = sentAt ? ((now - new Date(sentAt)) / (1000 * 60 * 60)) : null;
-    
-    await db.collection('posts').updateOne(
-      { _id: mostRecentPending._id },
-      {
-        $set: {
-          feedbackStatus: 'received',
-          userFeedback: finalFeedback,
-          responseDelayHours: responseDelayHours
-        }
-      }
-    );
-    
-    logger.whatsapp.log(`Feedback received: ${feedbackLetter} → ${finalFeedback}`);
-  } catch (error) {
-    logger.error.log(`Error processing feedback: ${error.message}`);
-  }
-}
-
-export function setFeedbackHandler(handler) {
-  feedbackHandler = handler;
-}
 

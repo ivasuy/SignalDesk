@@ -38,3 +38,67 @@ export async function productHuntRequest(query, variables = {}) {
   return data.data;
 }
 
+const POSTS_QUERY = `
+  query Posts($postedAfter: DateTime!, $first: Int!) {
+    posts(postedAfter: $postedAfter, first: $first, order: VOTES) {
+      edges {
+        node {
+          id
+          name
+          tagline
+          description
+          url
+          votesCount
+          createdAt
+          topics {
+            edges {
+              node {
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export async function fetchProductHuntPosts() {
+  try {
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    
+    const dateStr = yesterday.toISOString();
+    
+    const data = await productHuntRequest(POSTS_QUERY, {
+      postedAfter: dateStr,
+      first: 50
+    });
+    
+    if (!data || !data.posts || !data.posts.edges) {
+      return [];
+    }
+    
+    if (data.posts.edges.length === 0) {
+      return [];
+    }
+    
+    const posts = data.posts.edges.map(edge => ({
+      id: edge.node.id,
+      name: edge.node.name,
+      tagline: edge.node.tagline,
+      description: edge.node.description,
+      url: edge.node.url,
+      votesCount: edge.node.votesCount,
+      createdAt: edge.node.createdAt,
+      topics: edge.node.topics?.edges?.map(t => t.node.name) || []
+    }));
+    
+    return posts;
+  } catch (error) {
+    return [];
+  }
+}
+

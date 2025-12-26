@@ -1,13 +1,14 @@
 import { scrapeAskHiring } from './hiring.js';
 import { scrapeJobs } from './jobs.js';
-import { logger } from '../../utils/logger.js';
+import { logError, logPlatformComplete, logInfo } from '../../logs/index.js';
+import { markPlatformIngestionComplete, getDailyDeliveryState } from '../../db/state.js';
+import { connectDB } from '../../db/connection.js';
 
 export async function scrapeHackerNews() {
-  logger.hackernews.scrapingStart();
-  
   const stats = {
     askHiring: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 },
-    jobs: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 }
+    jobs: { scraped: 0, keywordFiltered: 0, aiClassified: 0, opportunities: 0, highValue: 0 },
+    errors: 0
   };
   
   try {
@@ -19,28 +20,25 @@ export async function scrapeHackerNews() {
     stats.askHiring = askHiringStats;
     stats.jobs = jobsStats;
     
-    logger.hackernews.summary();
-    logger.stats.hackernews(
-      'Ask Hiring',
-      askHiringStats.scraped,
-      askHiringStats.keywordFiltered,
-      askHiringStats.aiClassified,
-      askHiringStats.opportunities,
-      askHiringStats.highValue
-    );
-    logger.stats.hackernews(
-      'Jobs',
-      jobsStats.scraped,
-      jobsStats.keywordFiltered,
-      jobsStats.aiClassified,
-      jobsStats.opportunities,
-      jobsStats.highValue
-    );
-    logger.hackernews.scrapingComplete();
+    logPlatformComplete('hackernews', '');
     
-    return stats;
+    const allIngestionDone = await markPlatformIngestionComplete('hn');
+    if (allIngestionDone) {
+      const db = await connectDB();
+      const dailyState = await getDailyDeliveryState();
+      const bufferSizeAfter = await db.collection('classification_buffer').countDocuments({ classified: false });
+      
+      if (bufferSizeAfter === 0) {
+        logInfo('Ingestion complete. No items eligible for classification today.');
+      } else {
+        logInfo(`Ingestion complete. Waiting for classification to finish... (${bufferSizeAfter} items in buffer)`);
+      }
+    }
+    
+    return stats; 
   } catch (error) {
-    logger.error.log(`Hacker News error: ${error.message}`);
+    stats.errors++;
+    logError(`Hacker News error: ${error.message}`);
     return stats;
   }
 }

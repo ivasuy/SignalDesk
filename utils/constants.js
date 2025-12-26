@@ -137,3 +137,28 @@ export const EXCLUSION_KEYWORDS = [
   'i am looking to partner'
 ];
 
+// GitHub Configuration
+export const GITHUB_SKILL_KEYWORDS = [
+  'java',
+  'spring',
+  'spring boot',
+  'node',
+  'nestjs',
+  'react',
+  'nextjs',
+  'typescript',
+  'mongodb',
+  'api',
+  'backend',
+  'frontend',
+  'fullstack'
+];
+
+
+// HackerNews Configuration
+export const HACKERNEWS_TARGET_PATTERNS = [
+  'ask hn: who is hiring',
+  'ask hn: who wants to be hired',
+  'freelancer? seeking freelancer'
+];
+
