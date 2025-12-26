@@ -11,10 +11,18 @@ import { fetchHackerNewsPosts } from "./orchestrators/fetchers.js";
 import { fetchProductHuntPosts } from "./orchestrators/fetchers.js";
 import { fetchGitHubPosts } from "./orchestrators/fetchers.js";
 import { stopCostLogging, getAICallCounts } from "./ai/api.js";
+import { isDailyProcessingCompleted, markDailyProcessingCompleted } from "./db/state.js";
 
 dotenv.config();
 
 async function runDailyProcessing() {
+  // Check if processing has already been completed today
+  const alreadyCompleted = await isDailyProcessingCompleted();
+  if (alreadyCompleted) {
+    logInfo('Daily processing has already been completed today. Skipping...');
+    return;
+  }
+
   const overallStart = Date.now();
   const overallInitialAICalls = getAICallCounts();
   let totalErrors = 0;
@@ -93,10 +101,15 @@ async function runDailyProcessing() {
     });
     
     logInfo('All opportunities processed for today. Next run tomorrow.');
+    
+    // Mark processing as completed
+    await markDailyProcessingCompleted();
+    
     stopCostLogging();
   } catch (error) {
     totalErrors++;
     logFatal(`Daily processing error: ${error.message}`);
+    // Don't mark as completed if there was an error
     throw error;
   }
 }
